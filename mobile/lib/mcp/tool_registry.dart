@@ -75,13 +75,14 @@ class DeviceTool {
 }
 
 class ToolRegistry {
-  ToolRegistry._(Map<String, DeviceTool> tools, this.kismet)
+  ToolRegistry._(Map<String, DeviceTool> tools, this.kismet, this.phoneControl)
     : _tools = Map.unmodifiable(tools);
 
   factory ToolRegistry.fromTools(
     List<Json> entries, {
     List<Json>? capabilities,
     KismetStatus? kismet,
+    bool phoneControl = false,
   }) {
     final tools = <String, DeviceTool>{};
     final reported = capabilities == null ? null : _parseStatuses(capabilities);
@@ -136,7 +137,7 @@ class ToolRegistry {
     if (reported?.isNotEmpty ?? false) {
       throw const FormatException('树莓派报告了未注册工具的状态');
     }
-    return ToolRegistry._(tools, kismet);
+    return ToolRegistry._(tools, kismet, phoneControl);
   }
 
   static Map<String, ({CapabilityStatus status, String domain, String? reason})>
@@ -185,6 +186,7 @@ class ToolRegistry {
 
   final Map<String, DeviceTool> _tools;
   final KismetStatus? kismet;
+  final bool phoneControl;
 
   List<DeviceTool> get tools => List.unmodifiable(_tools.values);
   List<DeviceTool> get callableTools =>

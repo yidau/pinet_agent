@@ -1,6 +1,6 @@
 # PiAgent 0.7.0 · PocketNet AI
 
-PocketNet AI 是 PiAgent 的手机仪表盘。树莓派通过 MCP 提供系统状态和 Kismet 观测结果。V0.7 可以显示管理员单次普通 Wi-Fi 扫描发现的 AP、Linux Bluetooth 主动发现的设备，以及本地实验文件的离线重放状态。手机分别显示这些来源的可用条件，AI 使用其中可用的只读工具。
+PocketNet AI 让已注册的安卓手机通过树莓派热点查询系统状态和控制无线观测。V0.7.1 在 Wireless 页提供单次 Wi-Fi 扫描和限时蓝牙发现，在 Captures 页支持从手机导入 PCAP、PCAPNG 文件并控制离线重放。日常操作只需要手机和树莓派。 [手机操作及从 V0.7 更新](docs/phone-controls.md)
 
 首次注册时，手机扫描树莓派的永久二维码，通过蓝牙完成授权。每台手机使用独立的热点密码和 MCP 令牌。安装完成后，扫码注册、蓝牙校时和手机访问树莓派可以离线运行。使用 DeepSeek 聊天时，手机仍需能访问互联网。
 
@@ -13,7 +13,7 @@ PocketNet AI 是 PiAgent 的手机仪表盘。树莓派通过 MCP 提供系统�
 ```bash
 sudo apt update
 sudo apt install -y git python3-venv bluez rfkill hostapd dnsmasq-base openssl curl iproute2
-git clone --branch v0.7.0 https://gitee.com/zhaojiayi1101/piagent.git
+git clone --branch main https://github.com/yidau/pinet_agent.git piagent
 cd piagent
 ```
 
@@ -242,7 +242,7 @@ sudo install -m 0600 -o "$(id -u)" -g "$(id -g)" \
 
 1. 在顶部设备面板点「连接设备」。App 初始化 MCP 会话，调用 `tools/list` 和 `get_capability_status`，加载完成后显示「已连接」。
 2. 点「设备能力」查看所有已注册工具及状态。Agent 只使用设备确认为 `AVAILABLE` 的只读工具，调用前校验会话和参数。树莓派负责判断调用权限。
-3. Overview 显示设备与网络观测，Wireless 和 Captures 根据能力显示数据或空状态。打开 AI 后可发送「查看树莓派系统状态」。
+3. Overview 显示设备与网络观测。在 Wireless 点「扫描 Wi-Fi」或「开始蓝牙发现」，等待当前页显示设备。在 Captures 点「从手机导入」，选取文件后点「开始重放」。打开 AI 后可发送「查看树莓派系统状态」。
 4. 在设备能力面板点刷新，查看普通 Wi-Fi 扫描、Monitor Mode、蓝牙扫描和文件重放的状态与原因。点「断开连接」清除会话和工具列表。[V0.7 数据源](docs/v0.7-sources.md) · [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 ## 运维与验收

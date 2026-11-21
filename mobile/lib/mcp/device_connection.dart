@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../network.dart';
 import 'mcp_client.dart';
+import 'operator_client.dart';
 import 'tool_registry.dart';
 
 enum DeviceConnectionStatus {
@@ -87,6 +88,7 @@ class DeviceConnection extends ChangeNotifier {
     return ToolRegistry.fromTools(
       tools,
       capabilities: entries.map((entry) => jsonObject(entry, '工具状态')).toList(),
+      phoneControl: result['operator_api'] == 1,
       kismet: kismet == null
           ? null
           : KismetStatus.fromJson(jsonObject(kismet, 'Kismet')),
@@ -149,6 +151,12 @@ class DeviceSession {
   Future<void>? _refresh;
 
   ToolRegistry get registry => _registry;
+
+  OperatorClient get operatorClient {
+    _checkActive();
+    if (!registry.phoneControl) throw const FormatException('当前设备未提供手机操作接口。');
+    return _client.operatorClient;
+  }
 
   Future<void> refreshCapabilities() {
     _checkActive();

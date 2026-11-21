@@ -16,6 +16,8 @@ from .kismet_adapter import KismetError, PAGE_SIZE
 
 
 CAPTURES = Path("/var/lib/piagent-captures")
+PHONE_DIRECTORY = ".phone"
+UPLOAD_STAGING = ".staging"
 CONTROL = Path("/run/piagent-replay.sock")
 ALLOW_REPLAY = Path("/etc/piagent-sources/allow-replay")
 BT_CONFLICT = Path("/etc/piagent-sources/bluetooth-conflict")
@@ -53,20 +55,51 @@ def check_directory(directory):
         raise limited("Install a root-owned capture directory writable only by its administrator.")
 
 
-def capture_metadata(name, directory=CAPTURES):
+def phone_directory(directory):
+    """The root-owned library delegates new imports to one unprivileged writer."""
     check_directory(directory)
+    path = directory / PHONE_DIRECTORY
+    info = path.lstat()
+    if not stat.S_ISDIR(info.st_mode) or (os.name == "posix" and info.st_mode & 0o022):
+        raise limited("The phone import directory permissions are invalid.")
+    return path
+
+
+def validate_name(name):
     if not isinstance(name, str) or not FILE_NAME.fullmatch(name):
         raise invalid("Select a plain filename from list_captures.")
-    path = directory / name
-    fmt = FORMATS.get(path.suffix.lower())
+    fmt = FORMATS.get(Path(name).suffix.lower())
     if not fmt:
         raise invalid("Unsupported capture file extension.")
+    return fmt
+
+
+def capture_path(name, directory):
+    validate_name(name)
+    check_directory(directory)
+    original = directory / name
+    if os.path.lexists(original):
+        return original
+    try:
+        imported = phone_directory(directory) / name
+        return imported if os.path.lexists(imported) else original
+    except FileNotFoundError:
+        return original
+
+
+def capture_metadata(name, directory=CAPTURES):
+    path = capture_path(name, directory)
+    return inspect_capture(path, name, path.parent.stat().st_uid)
+
+
+def inspect_capture(path, name, owner_uid):
+    fmt = validate_name(name)
     try:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise invalid("The capture must be a regular file without links.")
-        if os.name == "posix" and (info.st_uid != CAPTURE_OWNER_UID or info.st_mode & 0o022):
-            raise invalid("Capture files must be installed read-only for the services by their administrator.")
+        if os.name == "posix" and (info.st_uid != owner_uid or info.st_mode & 0o022):
+            raise invalid("The capture has an unexpected owner or write permissions.")
         if not 0 < info.st_size <= MAX_BYTES:
             raise invalid("The selected file must contain data and be at most 64 MiB.")
         with path.open("rb") as stream:
@@ -104,18 +137,30 @@ def capture_metadata(name, directory=CAPTURES):
             "modified_at": datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(), "status": "AVAILABLE"}
 
 
-def list_files(directory=CAPTURES):
+def library_files(directory):
     check_directory(directory)
+    for path in directory.iterdir():
+        if path.name != PHONE_DIRECTORY:
+            yield path
+    try:
+        phone = phone_directory(directory)
+    except FileNotFoundError:
+        return
+    for path in phone.iterdir():
+        if path.name != UPLOAD_STAGING:
+            yield path
+
+
+def list_files(directory=CAPTURES):
     rows = []
     try:
-        with os.scandir(directory) as entries:
-            for entry in entries:
-                if len(rows) >= MAX_FILES:
-                    raise limited("The capture directory exceeds the 64-file limit.")
-                try:
-                    rows.append(capture_metadata(entry.name, directory))
-                except SourceError as error:
-                    rows.append({"filename": entry.name[:96], "id": entry.name[:96], "status": error.status, "reason": str(error)})
+        for path in library_files(directory):
+            if len(rows) >= MAX_FILES:
+                raise limited("The capture directory exceeds the 64-file limit.")
+            try:
+                rows.append(inspect_capture(path, path.name, path.parent.stat().st_uid))
+            except SourceError as error:
+                rows.append({"filename": path.name[:96], "id": path.name[:96], "status": error.status, "reason": str(error)})
     except OSError:
         raise limited("Cannot read the offline capture directory.") from None
     return sorted(rows, key=lambda row: row["filename"])
@@ -180,6 +225,7 @@ class SourceService:
         except SourceError as error:
             inventory = error.status, str(error)
         replay = inventory
+        phone_replay_ready = False
         valid = [row for row in rows if row["status"] == State.AVAILABLE]
         if inventory == available:
             if not rows:
@@ -193,7 +239,14 @@ class SourceService:
             elif status != available:
                 replay = status
             elif not ALLOW_REPLAY.is_file():
-                replay = State.DEGRADED, "The administrator has not enabled file replay."
+                try:
+                    phone_directory(self.directory)
+                    phone_replay_ready = True
+                except (OSError, SourceError):
+                    pass
+                reason = ("Start replay from Captures on an enrolled phone. Legacy MCP replay requires local authorization."
+                          if phone_replay_ready else "The administrator has not enabled file replay.")
+                replay = State.DEGRADED, reason
         stop = (State.DEGRADED, "There is no active replay.")
         if status == available:
             try:
@@ -205,16 +258,16 @@ class SourceService:
                     stop, replay = available, (State.DEGRADED, "Another replay is running.")
             except SourceError as error:
                 status = error.status, str(error)
+                phone_replay_ready = False
                 if replay == available:
                     replay = status
         metadata = available if valid else replay
         states = {"list_captures": inventory, "get_capture_metadata": metadata,
                   "get_bluetooth_devices": bt, "get_bluetooth_device_details": bt_details,
                   "get_capture_status": status, "replay_capture": replay, "stop_capture_replay": stop}
+        replay_feature = available if (stop == available or phone_replay_ready) and replay[0] != State.ERROR else replay
         features = {"bluetooth_scanning": {"status": bt[0], "reason": bt[1]},
-                    "pcap_replay": {"status": (State.AVAILABLE if stop == available and replay[0] != State.ERROR
-                                               else replay[0]),
-                                    "reason": ("" if stop == available and replay[0] != State.ERROR else replay[1])}}
+                    "pcap_replay": {"status": replay_feature[0], "reason": replay_feature[1]}}
         if status == available and state.get("state") == "error":
             features["pcap_replay"] = {"status": State.ERROR, "reason": state.get("reason", "Last replay failed.")}
         return states, features

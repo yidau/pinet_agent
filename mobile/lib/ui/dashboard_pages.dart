@@ -6,6 +6,7 @@ import '../mcp/device_connection.dart';
 import '../mcp/device_panel.dart';
 import '../mcp/tool_registry.dart';
 import '../network.dart';
+import 'phone_controls.dart';
 
 class OverviewPage extends StatelessWidget {
   const OverviewPage({
@@ -167,6 +168,15 @@ class WirelessPage extends StatelessWidget {
     return _Dashboard(
       title: '无线环境',
       children: [
+        if (session?.registry.phoneControl == true)
+          _Panel(
+            title: '无线扫描',
+            icon: Icons.sensors,
+            child: PhoneControls.radio(
+              key: ObjectKey(session),
+              session: session!,
+            ),
+          ),
         if (tools.any((name) => data.result(name)?['truncated'] == true))
           const _QuietText('设备仅返回了部分观测记录。以下列表和信道统计基于本次返回的数据。'),
         if (kismet?.sources.isEmpty == true &&
@@ -338,7 +348,17 @@ class CapturesPage extends StatelessWidget {
             icon: Icons.layers_clear_outlined,
             child: _QuietText('采集服务接入后可在这里查看 PCAP 文件与分析结果。'),
           ),
-        if (data.tool('get_capture_status') != null)
+        if (session?.registry.phoneControl == true)
+          _Panel(
+            title: '文件重放',
+            icon: Icons.replay_outlined,
+            child: PhoneControls.captures(
+              key: ObjectKey(session),
+              session: session!,
+              files: captures ?? const [],
+            ),
+          )
+        else if (data.tool('get_capture_status') != null)
           _Panel(
             title: '文件重放',
             icon: Icons.replay_outlined,

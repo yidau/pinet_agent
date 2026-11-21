@@ -1,0 +1,24 @@
+[Unit]
+Description=PocketNet fixed radio job request
+
+[Service]
+ExecStart=/usr/bin/python3 -I -B /usr/local/lib/piagent-sources/raspberry/mcp_server/phone_radio.py
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=8
+TimeoutStopSec=2
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+PrivateDevices=yes
+PrivateTmp=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX
+UMask=0077

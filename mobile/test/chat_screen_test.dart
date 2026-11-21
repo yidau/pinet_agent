@@ -18,17 +18,21 @@ class _EmptyHistory extends History {
 }
 
 class _DashboardConnection extends Connection {
-  _DashboardConnection(this.calls, {this.v07 = false})
-    : super(
-        Uri.parse('https://pi.example/mcp'),
-        'device-token',
-        Uri.parse('https://llm.example/chat/completions'),
-        '',
-        'test-model',
-      );
+  _DashboardConnection(
+    this.calls, {
+    this.v07 = false,
+    this.phoneControl = false,
+  }) : super(
+         Uri.parse('https://pi.example/mcp'),
+         'device-token',
+         Uri.parse('https://llm.example/chat/completions'),
+         '',
+         'test-model',
+       );
 
   final List<String> calls;
   final bool v07;
+  final bool phoneControl;
   bool sourceConnected = false;
 
   Map<String, String> get _domains => {
@@ -47,6 +51,24 @@ class _DashboardConnection extends Connection {
 
   @override
   http.Client deviceClient() => MockClient((request) async {
+    if (request.url.path.startsWith('/operator/')) {
+      expect(phoneControl, isTrue);
+      expect(request.headers['Authorization'], 'Bearer device-token');
+      final action = request.url.path;
+      calls.add('${request.method} $action');
+      if (action == '/operator/radio/wifi-scan') sourceConnected = true;
+      return http.Response(
+        jsonEncode({
+          'wifi': {
+            'state': sourceConnected ? 'completed' : 'idle',
+            'access_point_count': sourceConnected ? 1 : 0,
+          },
+          'bluetooth': {'state': 'idle'},
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    }
     final body = jsonDecode(request.body) as Json;
     final method = body['method'];
     final Json result;
@@ -78,6 +100,7 @@ class _DashboardConnection extends Connection {
         switch (name) {
           case 'get_capability_status':
             data = {
+              if (phoneControl) 'operator_api': 1,
               'kismet': {
                 'installed': true,
                 'running': true,
@@ -205,6 +228,38 @@ Future<void> _phoneLayout(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'only an explicit phone tap starts a scan and refreshes observations',
+    (tester) async {
+      await _phoneLayout(tester);
+      final calls = <String>[];
+      final connection = _DashboardConnection(
+        calls,
+        v07: true,
+        phoneControl: true,
+      );
+      await tester.pumpWidget(
+        PiAgentApp(history: _EmptyHistory(), initialConnection: connection),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('连接设备'));
+      await tester.pumpAndSettle();
+      await tester.tap(_tab('Wireless'));
+      await tester.pumpAndSettle();
+      expect(
+        calls.where((call) => call.startsWith('POST /operator/')),
+        isEmpty,
+      );
+      await tester.tap(find.text('扫描 Wi-Fi'));
+      await tester.pumpAndSettle();
+      expect(
+        calls.where((call) => call == 'POST /operator/radio/wifi-scan'),
+        hasLength(1),
+      );
+      expect(calls, contains('get_access_points'));
+      expect(find.textContaining('1 个接入点'), findsOneWidget);
+    },
+  );
   testWidgets(
     'C7: shows distinct radio sources, metadata and replay state from mock MCP',
     (tester) async {

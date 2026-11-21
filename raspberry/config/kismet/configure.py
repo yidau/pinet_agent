@@ -6,7 +6,6 @@ import http.client
 import json
 import os
 from pathlib import Path
-import pwd
 import re
 import secrets
 import subprocess
@@ -70,8 +69,12 @@ def configure_scan(port, headers, interface):
     key = previous.get("PIAGENT_SCAN_KEY") or create_key(port, headers, "scanreport")
     write_private(scan_env, f"PIAGENT_SCAN_INTERFACE={interface}\nPIAGENT_SCAN_UUID={source_uuid}\n"
                   f"PIAGENT_SCAN_URL=http://127.0.0.1:{port}\nPIAGENT_SCAN_KEY={key}\n")
-    modules = Path("/usr/lib/piagent-managed-scan/raspberry/mcp_server")
-    run("install", "-d", "-m", "0755", modules)
+    working_directory = Path("/usr/lib/piagent-managed-scan")
+    package = working_directory / "raspberry"
+    modules = package / "mcp_server"
+    # A prior installation can leave a root-only parent. The service must
+    # enter its working directory and traverse both Python package directories.
+    run("install", "-d", "-o", "root", "-g", "root", "-m", "0755", working_directory, package, modules)
     for filename in ("__init__.py", "kismet_adapter.py", "managed_scan.py"):
         run("install", "-m", "0644", HERE.parents[1] / "mcp_server" / filename, modules / filename)
     unit = "piagent-managed-scan@.service"
@@ -79,6 +82,8 @@ def configure_scan(port, headers, interface):
 
 
 def setup(port, scan_interface):
+    import pwd
+
     if not Path("/usr/bin/kismet").is_file():
         raise SystemExit("Install kismet-core first.")
     if not 1024 <= port <= 65535:

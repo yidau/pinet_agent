@@ -1,0 +1,12 @@
+[Unit]
+Description=PocketNet handset radio control socket
+
+[Socket]
+ListenStream=/run/piagent-phone-radio.sock
+Accept=yes
+SocketGroup=piagent-phone
+SocketMode=0660
+MaxConnections=8
+
+[Install]
+WantedBy=sockets.target

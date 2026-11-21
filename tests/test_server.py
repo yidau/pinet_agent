@@ -26,6 +26,7 @@ class McpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             app = create_app(Path(directory), token, ["testserver"])
             with TestClient(app) as client:
+                self.assertEqual(client.get("/operator/radio/status", headers=headers).status_code, 403)
                 self.assertEqual(client.post("/mcp", json={}).status_code, 401)
                 self.assertEqual(client.post("/mcp", headers={**headers, "Host": "other"}, json={}).status_code, 421)
                 self.assertEqual(
@@ -124,11 +125,12 @@ class DeviceMcpTests(unittest.TestCase):
         registry = Registry(root / "devices.sqlite3")
         registry.initialize()
         token = "d" * 43
-        registry.activate(
+        enrollment = registry.activate(
             b"test phone public key", "test phone", register=True,
             issue_token=lambda _device: token, enable_wifi=lambda _credential: None,
         )
         self.shared_token = "s" * 32
+        self.registry, self.device_id = registry, enrollment["device_id"]
         self.radio_scan = {"status": "DEGRADED", "reason": "No operator scan yet.", "source_uuid": None,
                            "access_points": [], "observed_at": None, "truncated": False}
         service = WirelessService(adapter, scan_reader=lambda: self.radio_scan)
@@ -340,6 +342,20 @@ class DeviceMcpTests(unittest.TestCase):
                     "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
                 })
                 self.assertEqual(response.status_code, 401)
+
+    def test_operator_requires_active_enrollment_and_checks_host_before_action(self):
+        url = "/operator/radio/wifi-scan"
+        with patch("raspberry.mcp_server.phone_radio.radio_action", return_value={"wifi": {"state": "starting"}}) as start:
+            self.assertEqual(self.client.post(url).status_code, 401)
+            self.assertEqual(self.client.post(url, headers={**self.headers, "Host": "other"}).status_code, 421)
+            self.assertEqual(self.client.post(url, headers=self.headers, json={"extra": True}).status_code, 400)
+            start.assert_not_called()
+            self.assertEqual(self.client.post(url, headers=self.headers, json={}).status_code, 200)
+            start.assert_called_once_with("wifi-scan")
+            self.registry.revoke(self.device_id, lambda _: None)
+            self.assertEqual(self.client.post(url, headers=self.headers).status_code, 401)
+            self.assertEqual(self.client.get("/operator/replay/status", headers=self.headers).status_code, 401)
+            self.assertEqual(start.call_count, 1)
 
 
 if __name__ == "__main__":

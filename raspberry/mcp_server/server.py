@@ -13,16 +13,19 @@ import anyio
 import uvicorn
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 from mcp.types import CallToolResult, ContentBlock, TextContent, Tool, ToolAnnotations
 from pydantic import Field
 from starlette.datastructures import Headers
-from starlette.responses import PlainTextResponse
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from raspberry.enrollment.registry import Registry
 
-from . import device_observations
+from . import device_observations, phone_radio
+from .phone_captures import capture_routes
 from .capabilities import NETWORK_TOOLS, MUTATING_TOOLS, CapabilityStatus
 from .wireless_service import WirelessError, WirelessService
 
@@ -92,10 +95,12 @@ def create_app(
 
     disk_path = workspace_path.resolve()
     wireless = wireless_service if wireless_service is not None else WirelessService()
+    transport = TransportSecuritySettings(allowed_hosts=[*LOOPBACK, *hosts])
+    operator_security = TransportSecurityMiddleware(transport)
     mcp = PiAgentMCP(
         "PocketNet", stateless_http=True, json_response=True, max_request_body_size=512 * 1024,
         streamable_http_path="/mcp",
-        transport_security=TransportSecuritySettings(allowed_hosts=[*LOOPBACK, *hosts]),
+        transport_security=transport,
     )
     capabilities: dict[str, tuple[str, Callable[[], StatusDetail]]] = {}
 
@@ -161,7 +166,10 @@ def create_app(
             if reason:
                 entry["reason"] = reason
             entries.append(entry)
-        return {"capabilities": entries, "kismet": summary}
+        result = {"capabilities": entries, "kismet": summary}
+        if registry is not None:
+            result["operator_api"] = 1
+        return result
 
     register(
         "get_system_info", "device",
@@ -198,7 +206,34 @@ def create_app(
                 annotations=WRITE if name in MUTATING_TOOLS else READ_ONLY,
             )
 
+    async def radio(request: Request) -> JSONResponse:
+        action = request.path_params.get("action")
+        if action is not None:
+            if action not in {"wifi-scan", "bluetooth-start", "bluetooth-stop"}:
+                return JSONResponse({"message": "Unknown radio action."}, status_code=404)
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 64:
+                    return JSONResponse({"message": "Radio actions take no parameters."}, status_code=413)
+                body.extend(chunk)
+            if body.strip() and body.strip() != b"{}":
+                return JSONResponse({"message": "Radio actions take no parameters."}, status_code=400)
+        try:
+            if action is None:
+                data = await anyio.to_thread.run_sync(phone_radio.radio_status)
+            else:
+                data = await anyio.to_thread.run_sync(phone_radio.radio_action, action)
+            return JSONResponse(data)
+        except phone_radio.RadioError as error:
+            return JSONResponse({"message": str(error)}, status_code=error.status_code)
+
     app = mcp.streamable_http_app()
+    if registry is not None:
+        app.routes.extend([
+            Route("/operator/radio/status", radio, methods=["GET"]),
+            Route("/operator/radio/{action}", radio, methods=["POST"]),
+            *capture_routes(wireless),
+        ])
     expected = f"Bearer {token}".encode("ascii") if registry is None else b""
 
     async def authenticated(scope: Scope, receive: Receive, send: Send) -> None:
@@ -220,6 +255,17 @@ def create_app(
                 response = PlainTextResponse("Unauthorized", status_code=401, headers={"WWW-Authenticate": "Bearer"})
                 await response(scope, receive, send)
                 return
+            if scope["path"].startswith("/operator/"):
+                if registry is None:
+                    await JSONResponse({"message": "Phone registration required."}, status_code=403)(scope, receive, send)
+                    return
+                rejection = await operator_security.validate_request(Request(scope))
+                if rejection is not None:
+                    await rejection(scope, receive, send)
+                    return
+                if scope["method"] in {"POST", "PUT"}:
+                    AUDIT.info("operator=%s method=%s route=%s", device_id, scope["method"],
+                               scope["path"].split("/")[2])
         await app(scope, receive, send)
 
     return authenticated

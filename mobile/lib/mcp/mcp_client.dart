@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 import '../network.dart';
+import 'operator_client.dart';
 
 class McpConnectionException extends FormatException {
   const McpConnectionException(super.message);
@@ -16,6 +17,7 @@ class McpClient {
   final http.Client _http;
   final Uri endpoint;
   final String token;
+  late final operatorClient = OperatorClient(_http, endpoint, token);
 
   static const _preferredVersion = '2025-11-25';
   static const _supportedVersions = {_preferredVersion, '2025-06-18'};
@@ -45,7 +47,7 @@ class McpClient {
     final reply = await _request('initialize', {
       'protocolVersion': _preferredVersion,
       'capabilities': <String, Object?>{},
-      'clientInfo': {'name': 'PiAgent mobile', 'version': '0.7.0'},
+      'clientInfo': {'name': 'PiAgent mobile', 'version': '0.7.1'},
     });
     final version = reply['protocolVersion'];
     if (!_supportedVersions.contains(version)) {
@@ -119,6 +121,7 @@ class McpClient {
 
   Future<void> _disconnect() async {
     _closed = true;
+    operatorClient.close();
     for (final request in _pending) {
       if (!request.isCompleted) request.complete();
     }
