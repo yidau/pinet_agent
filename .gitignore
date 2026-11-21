@@ -1,0 +1,8 @@
+.venv/
+.local-tools/
+__pycache__/
+*.py[cod]
+.env
+deepseekapi.txt
+raspberry/workspace/*
+!raspberry/workspace/.gitkeep
