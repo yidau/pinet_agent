@@ -17,6 +17,14 @@ DEVICE_FIELDS = [
     "kismet.device.base.type", "kismet.device.base.phyname", "kismet.device.base.channel",
     "kismet.device.base.signal",
 ]
+BEACON_RECORD = "dot11.device/dot11.device.last_beaconed_ssid_record/"
+WIFI_FIELDS = [
+    [BEACON_RECORD + "dot11.advertisedssid.ssid", "advertised_ssid"],
+    [BEACON_RECORD + "dot11.advertisedssid.cloaked", "ssid_hidden"],
+    [BEACON_RECORD + "dot11.advertisedssid.crypt_string", "beacon_security"],
+    "kismet.device.base.crypt", "kismet.device.base.first_time", "kismet.device.base.last_time",
+    "kismet.device.base.frequency", "kismet.device.base.related_devices",
+]
 
 
 class KismetError(Exception):
@@ -47,6 +55,18 @@ def optional_text(row, key):
     if value is not None and not isinstance(value, str):
         raise malformed()
     return value
+
+
+def positive_number(value):
+    return value if type(value) in (int, float) and math.isfinite(value) and value > 0 else None
+
+
+def related_ids(groups):
+    if not isinstance(groups, dict):
+        return []
+    keys = {key for group in groups.values() if isinstance(group, (list, dict))
+            for key in group if isinstance(key, str) and 0 < len(key) <= 256}
+    return sorted(keys)[:32]
 
 
 def flag(row, key):
@@ -176,12 +196,18 @@ class KismetAdapter:
             raise malformed() from None
         return self._view_devices("seenby-" + ident.upper(), wireless=phy == "IEEE802.11", phy=phy, source_uuid=ident)
 
-    def _view_devices(self, view, *, wireless=False, phy=None, source_uuid=None):
+    def get_monitor_access_points(self, source_uuids):
+        allowed = {str(UUID(value)) for value in source_uuids}
+        return self._view_devices("phydot11_accesspoints", wireless=True, phy="IEEE802.11", allowed_sources=allowed)
+
+    def _view_devices(self, view, *, wireless=False, phy=None, source_uuid=None, allowed_sources=None):
         fields = list(DEVICE_FIELDS)
+        if wireless:
+            fields.extend(WIFI_FIELDS)
         options = {"fields": fields, "datatable": True}
         if phy:
             options["regex"] = [["kismet.device.base.phyname", "^" + re.escape(phy) + "$"]]
-        if source_uuid:
+        if source_uuid or allowed_sources is not None:
             fields.append("kismet.device.base.seenby")
         if phy == "Bluetooth":
             fields.append(["bluetooth.device/bluetooth.device.service_uuid_strs", "service_uuids"])
@@ -201,15 +227,23 @@ class KismetAdapter:
                 raise malformed()
             signal = row.get("kismet.device.base.signal", {})
             single_source = True
-            if source_uuid:
+            own = {}
+            if source_uuid or allowed_sources is not None:
                 seen = row.get("kismet.device.base.seenby")
                 seen = list(seen.values()) if isinstance(seen, dict) else seen
                 seen = seen if isinstance(seen, list) else []
-                own = next((s for s in seen if isinstance(s, dict) and
-                            str(s.get("kismet.common.seenby.uuid", "")).lower() == source_uuid), None)
-                single_source = len(seen) == 1 and own is not None
-                if not single_source:
-                    signal = (own or {}).get("kismet.common.seenby.signal", {})
+                if allowed_sources is not None:
+                    # Global AP rows also include offline replay. Only reuse global fields
+                    # when every recorded source is one of the current live monitors.
+                    if not seen or not all(isinstance(s, dict) and
+                            str(s.get("kismet.common.seenby.uuid", "")).lower() in allowed_sources for s in seen):
+                        continue
+                else:
+                    own = next((s for s in seen if isinstance(s, dict) and
+                                str(s.get("kismet.common.seenby.uuid", "")).lower() == source_uuid), {})
+                    single_source = len(seen) == 1 and bool(own)
+                    if not single_source:
+                        signal = own.get("kismet.common.seenby.signal", {})
             if not isinstance(signal, dict):
                 raise malformed()
             last = signal.get("kismet.common.signal.last_signal")
@@ -226,6 +260,20 @@ class KismetAdapter:
                 "rssi_dbm": last if dbm and last is not None and last < 0 else None,
                 "samples": signal_history(signal) if wireless else [],
             })
+            if wireless:
+                ap = devices[-1]
+                for to, prop in (("first_seen", "first_time"), ("last_seen", "last_time")):
+                    seen_at = positive_number(own.get("kismet.common.seenby." + prop))
+                    ap[to] = seen_at or (positive_number(row.get("kismet.device.base." + prop)) if single_source else None)
+                ap["live_sighting"] = bool(own and (ap["last_seen"] or ap["rssi_dbm"] is not None or ap["samples"]))
+                if single_source and ap["type"] == "Wi-Fi AP":
+                    freq = positive_number(row.get("kismet.device.base.frequency"))
+                    ap.update(
+                        ssid=None if row.get("ssid_hidden") else optional_text(row, "advertised_ssid"),
+                        security=optional_text(row, "beacon_security") or optional_text(row, "kismet.device.base.crypt"),
+                        frequency_mhz=freq / 1000 if freq else None,
+                        related_device_ids=related_ids(row.get("kismet.device.base.related_devices")),
+                    )
             if phy == "Bluetooth" and single_source:
                 uuids = row.get("service_uuids")
                 if isinstance(uuids, list):
@@ -242,8 +290,15 @@ class KismetAdapter:
             phy_id = row.get("kismet.alert.phy_id")
             if type(phy_id) is not int:
                 raise malformed()
+            device_id = row.get("kismet.alert.device_key")
+            addresses = {str(row.get("kismet.alert." + key, "")).lower()
+                         for key in ("source_mac", "dest_mac", "transmitter_mac", "other_mac")}
+            macs = sorted(mac for mac in addresses if mac != "00:00:00:00:00:00" and
+                          re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac))
             alerts.append({"timestamp": timestamp, "type": string_field(row, "kismet.alert.header"),
                            "message": string_field(row, "kismet.alert.text")[:512],
+                           **({"device_id": device_id} if isinstance(device_id, str) and device_id else {}),
+                           **({"device_macs": macs} if macs else {}),
                            "phy_id": phy_id})
         alerts.sort(key=lambda item: item["timestamp"], reverse=True)
         return alerts

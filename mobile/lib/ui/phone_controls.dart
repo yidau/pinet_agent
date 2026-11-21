@@ -7,18 +7,30 @@ import 'package:material_ui/material_ui.dart';
 import '../mcp/device_connection.dart';
 import '../mcp/operator_client.dart';
 import '../network.dart';
+import 'console_style.dart';
 
 class PhoneControls extends StatefulWidget {
-  const PhoneControls.radio({super.key, required this.session})
-    : captures = null;
+  const PhoneControls.radio({
+    super.key,
+    required this.session,
+    this.showBluetooth,
+  }) : captures = null,
+       importOnly = false,
+       showImport = false;
   const PhoneControls.captures({
     super.key,
     required this.session,
     required List<Json> files,
-  }) : captures = files;
+    this.importOnly = false,
+    this.showImport = true,
+  }) : captures = files,
+       showBluetooth = null;
 
   final DeviceSession session;
   final List<Json>? captures;
+  final bool? showBluetooth;
+  final bool importOnly;
+  final bool showImport;
 
   @override
   State<PhoneControls> createState() => _PhoneControlsState();
@@ -27,9 +39,14 @@ class PhoneControls extends StatefulWidget {
 class _PhoneControlsState extends State<PhoneControls>
     with AutomaticKeepAliveClientMixin {
   static const _picker = MethodChannel('net.piagent.piagent/captures');
+  static const _pollInterval = Duration(seconds: 3);
+  static const _idleStatusAge = Duration(seconds: 30);
+  final _statusAge = Stopwatch();
   Timer? _poll;
   Json _status = {};
   int _generation = 0;
+  int? _readingGeneration;
+  bool _visible = false;
   bool _busy = false;
   String? _message;
   String? _error;
@@ -38,9 +55,47 @@ class _PhoneControlsState extends State<PhoneControls>
   bool get wantKeepAlive => true;
 
   @override
-  void initState() {
-    super.initState();
-    unawaited(_read());
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateVisibility();
+  }
+
+  void _updateVisibility({bool sessionChanged = false}) {
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (_visible == visible && !sessionChanged) return;
+    _visible = visible;
+    _poll?.cancel();
+    if (!visible ||
+        widget.importOnly ||
+        !widget.session.isActive ||
+        _busy ||
+        _readingGeneration == _generation) {
+      return;
+    }
+    if (_running) {
+      _schedule();
+    } else if (!_statusAge.isRunning || _statusAge.elapsed >= _idleStatusAge) {
+      unawaited(_read());
+    }
+  }
+
+  @override
+  void didUpdateWidget(PhoneControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(widget.session, oldWidget.session) ||
+        widget.importOnly != oldWidget.importOnly ||
+        _radio != (oldWidget.captures == null)) {
+      ++_generation;
+      _poll?.cancel();
+      _busy = false;
+      _status = {};
+      _message = null;
+      _error = null;
+      _statusAge
+        ..stop()
+        ..reset();
+      _updateVisibility(sessionChanged: true);
+    }
   }
 
   @override
@@ -62,9 +117,10 @@ class _PhoneControlsState extends State<PhoneControls>
 
   void _schedule() {
     _poll?.cancel();
-    if (_running) {
+    if (_visible && _running) {
+      final remaining = _pollInterval - _statusAge.elapsed;
       _poll = Timer(
-        const Duration(seconds: 3),
+        remaining.isNegative ? Duration.zero : remaining,
         () => unawaited(_read(refresh: true)),
       );
     }
@@ -72,6 +128,10 @@ class _PhoneControlsState extends State<PhoneControls>
 
   Future<void> _read({bool refresh = false}) async {
     final generation = ++_generation;
+    _readingGeneration = generation;
+    _statusAge
+      ..reset()
+      ..start();
     _poll?.cancel();
     try {
       final reply = await widget.session.operatorClient.call(
@@ -82,10 +142,13 @@ class _PhoneControlsState extends State<PhoneControls>
         _status = reply;
         _error = null;
       });
+      _statusAge.reset();
       if (refresh) await widget.session.refreshCapabilities();
     } on FormatException catch (error) {
       if (_current(generation)) setState(() => _error = error.message);
       return;
+    } finally {
+      if (_readingGeneration == generation) _readingGeneration = null;
     }
     if (_current(generation)) _schedule();
   }
@@ -103,6 +166,9 @@ class _PhoneControlsState extends State<PhoneControls>
       final reply = await widget.session.operatorClient.call(action, body);
       if (!_current(generation)) return;
       setState(() => _status = reply);
+      _statusAge
+        ..reset()
+        ..start();
       await widget.session.refreshCapabilities();
     } on FormatException catch (error) {
       if (_current(generation)) setState(() => _error = error.message);
@@ -111,6 +177,39 @@ class _PhoneControlsState extends State<PhoneControls>
         setState(() => _busy = false);
         _schedule();
       }
+    }
+  }
+
+  Future<void> _confirmCommand({
+    required PhoneAction action,
+    required String title,
+    required String explanation,
+    required String confirm,
+    Json? body,
+  }) async {
+    final session = widget.session;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text(title),
+        content: Text(explanation),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            child: Text(confirm),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true &&
+        mounted &&
+        identical(widget.session, session) &&
+        session.isActive) {
+      await _command(action, body);
     }
   }
 
@@ -174,6 +273,7 @@ class _PhoneControlsState extends State<PhoneControls>
   }
 
   Future<void> _selectReplay() async {
+    final session = widget.session;
     final id = await showModalBottomSheet<String>(
       context: context,
       builder: (sheet) => SafeArea(
@@ -192,11 +292,17 @@ class _PhoneControlsState extends State<PhoneControls>
         ),
       ),
     );
-    if (mounted && widget.session.isActive && id != null) {
-      await _command(PhoneAction.replayStart, {
-        'capture_id': id,
-        'confirm': true,
-      });
+    if (mounted &&
+        identical(widget.session, session) &&
+        session.isActive &&
+        id != null) {
+      await _confirmCommand(
+        action: PhoneAction.replayStart,
+        title: '重放这个文件？',
+        explanation: '树莓派将在本机分析 $id，完成后会自动结束。',
+        confirm: '确认重放',
+        body: {'capture_id': id, 'confirm': true},
+      );
     }
   }
 
@@ -228,70 +334,99 @@ class _PhoneControlsState extends State<PhoneControls>
             spacing: 8,
             runSpacing: 6,
             children: [
-              FilledButton.icon(
-                icon: const Icon(Icons.wifi),
-                label: const Text('扫描 Wi-Fi'),
-                onPressed: _busy || _active(wifi['state'])
-                    ? null
-                    : () => _command(PhoneAction.wifiScan),
-              ),
-              OutlinedButton.icon(
-                icon: Icon(btOn ? Icons.stop : Icons.bluetooth_searching),
-                label: Text(btOn ? '停止蓝牙发现' : '开始蓝牙发现'),
-                onPressed: _busy || bt['state'] == 'stopping'
-                    ? null
-                    : () => _command(
-                        btOn
-                            ? PhoneAction.bluetoothStop
-                            : PhoneAction.bluetoothStart,
-                      ),
-              ),
+              if (widget.showBluetooth != true)
+                FilledButton.icon(
+                  icon: const Icon(Icons.wifi),
+                  label: const Text('扫描 Wi-Fi'),
+                  onPressed: _busy || _active(wifi['state'])
+                      ? null
+                      : () => _confirmCommand(
+                          action: PhoneAction.wifiScan,
+                          title: '发起一次 Wi-Fi 扫描？',
+                          explanation: '树莓派将扫描附近接入点。与热点共用无线电时，手机连接可能短暂停顿。',
+                          confirm: '确认扫描',
+                        ),
+                ),
+              if (widget.showBluetooth != false)
+                OutlinedButton.icon(
+                  icon: Icon(btOn ? Icons.stop : Icons.bluetooth_searching),
+                  label: Text(btOn ? '停止蓝牙发现' : '开始蓝牙发现'),
+                  onPressed: _busy || bt['state'] == 'stopping'
+                      ? null
+                      : () => _confirmCommand(
+                          action: btOn
+                              ? PhoneAction.bluetoothStop
+                              : PhoneAction.bluetoothStart,
+                          title: btOn ? '停止本次蓝牙发现？' : '开始蓝牙发现？',
+                          explanation: btOn
+                              ? '本轮发现将结束。'
+                              : '树莓派将发现附近的蓝牙设备，最长运行 120 秒，可随时停止。',
+                          confirm: btOn ? '确认停止' : '确认开始',
+                        ),
+                ),
+              _refreshButton(),
             ],
           ),
-          Text(
-            'Wi-Fi · ${_label(wifi['state'])}${wifi['access_point_count'] is int && wifi['state'] == 'completed' ? " · ${wifi['access_point_count']} 个接入点" : ""}',
-          ),
-          if (wifi['reason'] case final String reason when reason.isNotEmpty)
-            Text(reason),
-          Text(
-            '蓝牙 · ${_label(bt['state'])}${btOn && bt['remaining_seconds'] is int ? " · 剩余 ${bt['remaining_seconds']} 秒" : ""}',
-          ),
-          if (bt['reason'] case final String reason when reason.isNotEmpty)
-            Text(reason),
+          if (widget.showBluetooth != true)
+            _statusLine(
+              'Wi-Fi',
+              wifi,
+              wifi['access_point_count'] is int && wifi['state'] == 'completed'
+                  ? '${wifi['access_point_count']} 个接入点'
+                  : null,
+            ),
+          if (widget.showBluetooth != false)
+            _statusLine(
+              '蓝牙',
+              bt,
+              btOn && bt['remaining_seconds'] is int
+                  ? '剩余 ${bt['remaining_seconds']} 秒'
+                  : null,
+            ),
         ] else ...[
           Wrap(
             spacing: 8,
             runSpacing: 6,
             children: [
-              if (Platform.isAndroid)
+              if (widget.showImport && Platform.isAndroid)
                 OutlinedButton.icon(
                   icon: const Icon(Icons.upload_file),
                   label: const Text('从手机导入'),
                   onPressed: _busy ? null : _import,
                 ),
-              FilledButton.icon(
-                icon: Icon(replaying ? Icons.stop : Icons.play_arrow),
-                label: Text(replaying ? '停止重放' : '开始重放'),
-                onPressed: _busy || (!replaying && widget.captures!.isEmpty)
-                    ? null
-                    : () {
-                        if (replaying) {
-                          unawaited(
-                            _command(PhoneAction.replayStop, {'confirm': true}),
-                          );
-                        } else {
-                          unawaited(_selectReplay());
-                        }
-                      },
-              ),
+              if (!widget.importOnly)
+                FilledButton.icon(
+                  icon: Icon(replaying ? Icons.stop : Icons.play_arrow),
+                  label: Text(replaying ? '停止重放' : '开始重放'),
+                  onPressed: _busy || (!replaying && widget.captures!.isEmpty)
+                      ? null
+                      : () {
+                          if (replaying) {
+                            unawaited(
+                              _confirmCommand(
+                                action: PhoneAction.replayStop,
+                                title: '停止本次重放？',
+                                explanation: '设备会结束当前文件的分析，原始文件将保留在树莓派上。',
+                                confirm: '确认停止',
+                                body: {'confirm': true},
+                              ),
+                            );
+                          } else {
+                            unawaited(_selectReplay());
+                          }
+                        },
+                ),
+              if (!widget.importOnly) _refreshButton(),
             ],
           ),
-          Text('文件重放 · ${_label(_status['state'])}'),
+          if (widget.showImport && !Platform.isAndroid)
+            const Text('从手机导入文件需要 Android 文件选择器。'),
+          if (!widget.importOnly && !replaying && widget.captures!.isEmpty)
+            const Text('先在「文件」中导入 PCAP 或 PCAPNG，即可启动离线重放。'),
+          if (!widget.importOnly) _statusLine('文件重放', _status, null),
           if (_status['filename'] case final String file) Text(file),
           if (_status['datasource'] case final String uuid)
             SelectableText('数据源 $uuid'),
-          if (_status['reason'] case final String reason when reason.isNotEmpty)
-            Text(reason),
           if (_status['total_devices'] case final int count)
             Text('本次文件源观测到 $count 台设备'),
           if (_status['observed_devices'] case final List devices)
@@ -303,16 +438,74 @@ class _PhoneControlsState extends State<PhoneControls>
         if (_busy) const LinearProgressIndicator(),
         if (_message != null) Text(_message!),
         if (_error != null)
-          Text(
-            _error!,
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          Semantics(
+            liveRegion: true,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                const SizedBox(width: 6),
+                Expanded(child: Text(_error!)),
+              ],
+            ),
           ),
-        TextButton.icon(
-          onPressed: _busy ? null : () => _read(refresh: true),
-          icon: const Icon(Icons.refresh),
-          label: const Text('刷新状态'),
-        ),
       ],
+    );
+  }
+
+  Widget _refreshButton() => IconButton(
+    onPressed: _busy ? null : () => _read(refresh: true),
+    tooltip: '刷新状态',
+    icon: const Icon(Icons.refresh, size: 20),
+  );
+
+  Widget _statusLine(String title, Json data, String? detail) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final state = data['state'];
+    final (icon, tone) = switch (state) {
+      'error' => (Icons.error_outline, colors.error),
+      'degraded' => (Icons.info_outline, ConsoleColors.warningOf(context)),
+      'completed' => (
+        Icons.check_circle_outline,
+        ConsoleColors.successOf(context),
+      ),
+      'running' || 'starting' || 'stopping' => (Icons.sensors, colors.primary),
+      _ => (Icons.radio_button_unchecked, colors.onSurfaceVariant),
+    };
+    return Padding(
+      padding: const EdgeInsets.only(top: 7),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: tone),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  [title, _label(state), ?detail].join(' · '),
+                  style: theme.textTheme.labelMedium?.copyWith(color: tone),
+                ),
+              ),
+            ],
+          ),
+          if (data['reason'] case final String reason when reason.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 3, left: 23),
+              child: Text(
+                reason,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

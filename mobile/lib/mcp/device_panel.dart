@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../ui/console_style.dart';
 import 'device_connection.dart';
 import 'tool_registry.dart';
 
@@ -40,117 +41,88 @@ class DevicePanel extends StatelessWidget {
       DeviceConnectionStatus.error => '连接失败',
     };
     final statusColor = switch (status) {
-      DeviceConnectionStatus.ready => const Color(0xff63dca3),
+      DeviceConnectionStatus.ready => ConsoleColors.successOf(context),
       DeviceConnectionStatus.error => colors.error,
       DeviceConnectionStatus.connecting ||
       DeviceConnectionStatus.discovering => colors.primary,
       DeviceConnectionStatus.disconnected => colors.onSurfaceVariant,
     };
-    final canDisconnect = switch (status) {
-      DeviceConnectionStatus.connecting ||
-      DeviceConnectionStatus.discovering ||
-      DeviceConnectionStatus.ready => true,
-      DeviceConnectionStatus.disconnected ||
-      DeviceConnectionStatus.error => false,
-    };
     final session = connection.session;
-
-    return Card(
-      margin: const EdgeInsets.only(top: 8),
-      color: colors.surfaceContainerLow,
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: colors.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: colors.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Icon(
-                      Icons.lan_outlined,
-                      color: colors.primary,
-                      size: 20,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+    final name = connection.deviceName ?? configuredName ?? '树莓派';
+    final pending =
+        status == DeviceConnectionStatus.connecting ||
+        status == DeviceConnectionStatus.discovering;
+    final stateIcon = switch (status) {
+      DeviceConnectionStatus.ready => Icons.check_circle_outline,
+      DeviceConnectionStatus.error => Icons.error_outline,
+      DeviceConnectionStatus.connecting ||
+      DeviceConnectionStatus.discovering => Icons.sync,
+      _ => Icons.link_off,
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.only(left: 12, right: 4),
+          decoration: BoxDecoration(
+            color: colors.surfaceContainerLow,
+            border: Border.all(color: colors.outlineVariant, width: 0.65),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Row(
+            children: [
+              Icon(stateIcon, size: 18, color: statusColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Tooltip(
+                  message: [name, ?endpoint?.toString()].join('\n'),
+                  child: Wrap(
+                    spacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
-                        configuredName ?? connection.deviceName ?? '树莓派',
-                        style: theme.textTheme.titleSmall,
+                        name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelLarge,
                       ),
                       Text(
-                        endpoint?.toString() ?? '未配置设备地址',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
+                        statusLabel,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: statusColor,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                if (canDisconnect)
-                  OutlinedButton(
-                    onPressed: () => unawaited(connection.disconnect()),
-                    child: const Text('断开连接'),
-                  )
-                else
-                  FilledButton(onPressed: onConnect, child: const Text('连接设备')),
-              ],
-            ),
-            Row(
-              children: [
-                Icon(Icons.circle, color: statusColor, size: 8),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    statusLabel,
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: statusColor,
-                    ),
-                  ),
-                ),
-                if (session != null)
-                  TextButton.icon(
-                    onPressed: () => _showCapabilities(context, session),
-                    icon: const Icon(Icons.view_list_outlined, size: 18),
-                    label: Text('设备能力（${session.registry.tools.length}）'),
-                  )
-                else
-                  const SizedBox(height: 28),
-              ],
-            ),
-            if (connection.error case final reason?)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  reason,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.error,
-                  ),
-                ),
               ),
-          ],
+              if (session != null)
+                TextButton(
+                  onPressed: () => _showCapabilities(context, session),
+                  child: Text('设备能力（${session.registry.tools.length}）'),
+                )
+              else if (pending)
+                TextButton(
+                  onPressed: () => unawaited(connection.disconnect()),
+                  child: const Text('取消'),
+                )
+              else
+                TextButton(onPressed: onConnect, child: const Text('连接设备')),
+            ],
+          ),
         ),
-      ),
+        if (connection.error case final String reason)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
+            child: Text(
+              reason,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+            ),
+          ),
+      ],
     );
   }
 
@@ -332,9 +304,9 @@ class _CapabilityRow extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final color = switch (tool.status) {
-      CapabilityStatus.available => const Color(0xff63dca3),
+      CapabilityStatus.available => ConsoleColors.successOf(context),
       CapabilityStatus.error => colors.error,
-      CapabilityStatus.degraded => const Color(0xffffc477),
+      CapabilityStatus.degraded => ConsoleColors.warningOf(context),
       CapabilityStatus.unavailable ||
       CapabilityStatus.unknown => colors.onSurfaceVariant,
     };

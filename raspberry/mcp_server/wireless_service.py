@@ -5,10 +5,11 @@ import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 
+from .ap_observations import ApObservations, canonical_bssid, network_summary
 from .capabilities import CapabilityStatus as State
 from .file_sources import SourceError, SourceService
 from .kismet_adapter import PAGE_SIZE, KismetAdapter, KismetError
-from .managed_scan import read_managed_scan
+from .managed_scan import read_managed_history, read_managed_scan
 
 
 NO_SOURCE = "No active monitor source or recent managed scan is available."
@@ -62,7 +63,7 @@ def feature(status, reason=""):
 class WifiView:
     """A bounded view of APs and clients with explicit observation provenance."""
 
-    def __init__(self, adapter, sources, scan):
+    def __init__(self, adapter, sources, scan, observations):
         managed = feature(scan["status"], scan["reason"])
         if managed["status"] == State.AVAILABLE and not any(
             s["uuid"].lower() == str(scan["source_uuid"]).lower() and s["driver"] == "virtual" for s in sources
@@ -75,20 +76,32 @@ class WifiView:
                     and not s["paused"] and not s["error"]]
         monitor = feature(State.DEGRADED, NO_MONITOR)
         monitor_rows = {}
+        monitor_samples = []
         truncated = False
         if monitors:
             try:
                 for source in monitors[:4]:
                     devices, total = adapter.get_source_devices(source["uuid"], phy="IEEE802.11")
                     truncated |= total > len(devices)
-                    for row in devices:
-                        if row["phy"] == "IEEE802.11":
-                            monitor_rows[row["id"]] = {**row, "observation_source": "monitor_mode"}
+                    monitor_samples.extend(devices)
+                # A source-specific page may be filled with clients. The optional AP view
+                # returns only devices for which the adapter verified a live-source sighting.
+                if truncated and hasattr(adapter, "get_monitor_access_points"):
+                    try:
+                        extra, _ = adapter.get_monitor_access_points([s["uuid"] for s in monitors[:4]])
+                        monitor_samples.extend(extra)
+                    except KismetError:
+                        pass  # Older Kismet releases may not advertise the AP view.
                 truncated |= len(monitors) > 4
                 monitor = feature(State.AVAILABLE)
             except KismetError as error:
-                monitor_rows.clear()
+                monitor_samples.clear()
                 monitor = feature(State.ERROR, str(error))
+        monitor_samples = [dict(r, observation_source="monitor_mode") for r in monitor_samples
+                           if r["phy"] == "IEEE802.11"]
+        for record in monitor_samples:
+            if record["id"] not in monitor_rows or record["type"] is not None:
+                monitor_rows[record["id"]] = record
         self.features = {"managed_scan": managed, "monitor_mode": monitor}
         self.monitor = monitor
         self.monitors = len(monitors)
@@ -102,20 +115,21 @@ class WifiView:
             self.availability = feature(State.DEGRADED, NO_SOURCE + " " + managed["reason"])
 
         self.devices = list(monitor_rows.values())
-        aps = {row["mac"].lower(): public_device(row) for row in self.devices if row["type"] == "Wi-Fi AP"}
+        self.observations = observations
+        self.scan_uuid = scan.get("source_uuid")
+        reports = [r for r in monitor_samples if r["type"] == "Wi-Fi AP"]
         if self.managed:
             for record in scan["access_points"]:
-                key = record["mac"].lower()
-                entry = dict(record, observation_source="managed_scan", bssid=record["mac"], ssid=record["name"])
-                if key in aps:
-                    entry["observation_sources"] = ["managed_scan", "monitor_mode"]
-                aps[key] = entry
+                reports.append(dict(record, observation_source="managed_scan", ssid=record["name"]))
             truncated |= scan["truncated"]
-        self.aps = list(aps.values())
+        confirmed = {canonical_bssid(r["mac"]) for r in reports}
+        reports.extend(r for r in monitor_samples if r["type"] is None and r.get("live_sighting")
+                       and canonical_bssid(r["mac"]) in confirmed)
+        self.aps, self.aliases = observations.current(reports)
         self.clients = [public_device(row) for row in self.devices if row["type"] == "Wi-Fi Client"]
         self.history = [{"id": row["id"], "name": row["name"], "samples": row["samples"],
                          "observation_source": "monitor_mode"} for row in self.devices if row["samples"]]
-        devices_seen = {d["mac"].lower() for d in self.devices} | set(aps)
+        devices_seen = {d["mac"].lower() for d in self.devices} | {row["bssid"] for row in self.aps}
         origin = "kismet" if not self.managed else (
             "managed_scan+kismet" if self.devices else "managed_scan")
         self.scope = {"sampled_devices": len(devices_seen), "total_wifi_devices": None if truncated else len(devices_seen),
@@ -135,11 +149,15 @@ class WifiView:
 
     def read(self, name, ap_id):
         if name == "get_access_points":
-            return {**self.scope, "access_points": self.aps}
+            return {**self.scope, "access_points": self.aps, **network_summary(self.aps)}
         if name == "get_ap_details":
+            address = self.aliases.get(ap_id) or canonical_bssid(ap_id)
             for row in self.aps:
-                if row["id"] == ap_id:
-                    return {"access_point": row, "source": row["observation_source"]}
+                if row["bssid"] == address:
+                    saved = read_managed_history(self.scan_uuid, address)
+                    return {"access_point": row, "source": row["observation_source"],
+                            "related_bssids": row.get("related_bssids", []),
+                            "observations": self.observations.history(address, saved)}
             raise WirelessError(State.ERROR, "AP_NOT_IN_VIEW", "The selected AP is absent from the current view.")
         if name == "get_wireless_clients":
             return {**self.scope, "clients": self.clients}
@@ -159,6 +177,7 @@ class WirelessService:
     def __init__(self, adapter: KismetAdapter | None = None, *, scan_reader=read_managed_scan, source_service=None):
         self.adapter = adapter if adapter is not None else KismetAdapter()
         self.scan_reader = scan_reader
+        self.observations = ApObservations()
         self.source_service = source_service if source_service is not None else SourceService(self.adapter)
 
     def _source_summary(self, sources, error_reason=""):
@@ -169,7 +188,7 @@ class WirelessService:
             active_count = None
             wifi_state = feature(State.ERROR, error_reason)
         else:
-            wifi = WifiView(self.adapter, sources, self.scan_reader())
+            wifi = WifiView(self.adapter, sources, self.scan_reader(), self.observations)
             states.update(wifi.tool_states())
             wifi_features = wifi.features
             active_count = wifi.monitors + int(wifi.managed)
@@ -244,7 +263,7 @@ class WirelessService:
             return summary
         if name not in AP_TOOLS | MONITOR_TOOLS:
             raise WirelessError(State.UNAVAILABLE, "CAPABILITY_UNAVAILABLE", "This capability is not implemented.")
-        wifi = WifiView(self.adapter, sources, self.scan_reader())
+        wifi = WifiView(self.adapter, sources, self.scan_reader(), self.observations)
         status, reason = wifi.tool_states()[name]
         if status != State.AVAILABLE:
             raise WirelessError(status, "CAPABILITY_UNAVAILABLE", reason)

@@ -9,7 +9,9 @@ from unittest.mock import Mock, patch
 from urllib.parse import parse_qs
 
 from raspberry.mcp_server.kismet_adapter import KismetAdapter, KismetError
-from raspberry.mcp_server.managed_scan import access_point, empty_state, kismet_reports, read_managed_scan
+from raspberry.mcp_server.managed_scan import (
+    access_point, empty_state, kismet_reports, read_managed_history, read_managed_scan, record_managed_history,
+)
 
 
 class ManagedScanFormatTests(unittest.TestCase):
@@ -84,3 +86,23 @@ class ManagedScanFormatTests(unittest.TestCase):
             reply.read.return_value = b'{"success": false}'
             with self.assertRaises(KismetError):
                 adapter.submit_scan_report(uid, "lab radio", [])
+
+    def test_managed_history_survives_separate_scans_without_a_connected_client(self):
+        source = "9af16f76-b038-43ca-8adc-88a8abb581e4"
+        other = "532afebe-ba15-45e7-9f8f-a661019c86fc"
+        row = self.point({})
+        later = dict(row, observed_at=row["observed_at"] + 60, rssi_dbm=-66, channel="11")
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "raspberry.mcp_server.managed_scan.STATE", Path(tmp) / "status.json"
+        ):
+            record_managed_history(source, [row])
+            record_managed_history(source, [later])
+            record_managed_history(source, [later])
+            self.assertEqual(later["first_seen"], row["observed_at"])
+            samples = read_managed_history(source, row["mac"])
+            self.assertCountEqual(
+                [(s["timestamp"], s["rssi_dbm"], s["channel"], s["observation_source"]) for s in samples],
+                [(row["observed_at"], -57.5, "1", "managed_scan"),
+                 (later["observed_at"], -66, "11", "managed_scan")],
+            )
+            self.assertEqual(read_managed_history(other, row["mac"]), [])

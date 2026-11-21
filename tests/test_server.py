@@ -17,6 +17,29 @@ from raspberry.mcp_server.wireless_service import WirelessService
 
 
 class McpTests(unittest.TestCase):
+    def test_kismet_ap_view_uses_beacon_ssids_and_only_live_source_evidence(self):
+        adapter = KismetAdapter()
+        live = "99f1201e-8dd7-447e-89c5-90dea2c83aca"
+        replay = "9dac88fb-463a-4827-b927-15f3dc7cc818"
+        device = {
+            "kismet.device.base.macaddr": "02:00:00:00:00:01",
+            "kismet.device.base.key": "first", "kismet.device.base.name": "device label",
+            "kismet.device.base.type": "Wi-Fi AP", "kismet.device.base.phyname": "IEEE802.11",
+            "kismet.device.base.first_time": 50, "kismet.device.base.last_time": 70,
+            "kismet.device.base.frequency": 5180000,
+            "kismet.device.base.related_devices": {"dot11_bssid": ["second"]},
+            "kismet.device.base.seenby": [{"kismet.common.seenby.uuid": live}],
+            "advertised_ssid": " Cafe ", "beacon_security": "WPA3",
+        }
+        cloaked = {**device, "kismet.device.base.key": "second", "ssid_hidden": 1}
+        offline = {**device, "kismet.device.base.seenby": [{"kismet.common.seenby.uuid": replay}]}
+        with patch.object(adapter, "_request", return_value={"recordsFiltered": 3, "data": [device, cloaked, offline]}) as read:
+            rows, _ = adapter.get_monitor_access_points([live])
+        self.assertEqual(read.call_args.args[0], "/devices/views/phydot11_accesspoints/devices.json")
+        self.assertEqual([r["ssid"] for r in rows], [" Cafe ", None])
+        self.assertEqual((rows[0]["security"], rows[0]["frequency_mhz"], rows[0]["last_seen"]), ("WPA3", 5180, 70))
+        self.assertEqual(rows[0]["related_device_ids"], ["second"])
+
     def test_shared_token_transport_and_boundary(self):
         token = "test-token-for-local-use-only-12345"
         headers = {
@@ -264,6 +287,71 @@ class DeviceMcpTests(unittest.TestCase):
         rows = self.call("get_access_points")["structuredContent"]["access_points"]
         self.assertEqual([(row["id"], row["observation_source"]) for row in rows],
                          [("02:00:00:00:00:01", "monitor_mode")])
+
+    def test_ssid_groups_unique_bssids_and_keeps_per_source_observations(self):
+        self.initialize()
+        scan_uuid = "532afebe-ba15-45e7-9f8f-a661019c86fc"
+        monitor_uuid = "51111234-33aa-48bb-9522-daef000000ab"
+        self.api["GET", "/datasource/all_sources.json"] = [
+            {"kismet.datasource.name": "scan report", "kismet.datasource.uuid": scan_uuid,
+             "kismet.datasource.hardware": "IEEE80211 scan"},
+            {"kismet.datasource.name": "monitor", "kismet.datasource.uuid": monitor_uuid,
+             "kismet.datasource.type_driver": {"kismet.datasource.driver.type": "linuxwifi"},
+             "kismet.datasource.running": True, "kismet.datasource.paused": False, "kismet.datasource.error": False},
+        ]
+        first, second, case_variant, hidden1, hidden2 = [
+            f"02:ab:00:00:00:{number:02x}" for number in range(1, 6)
+        ]
+        started = 1770000000
+        monitor = {
+            "kismet.device.base.key": "monitor-key", "kismet.device.base.macaddr": first.upper(),
+            "kismet.device.base.name": "Cafe", "kismet.device.base.type": "Wi-Fi AP",
+            "kismet.device.base.phyname": "IEEE802.11", "kismet.device.base.channel": "6",
+            "kismet.device.base.first_time": started, "kismet.device.base.last_time": started,
+            "kismet.device.base.seenby": {"1": {"kismet.common.seenby.uuid": monitor_uuid,
+                                                "kismet.common.seenby.last_time": started}},
+            "kismet.device.base.signal": {"kismet.common.signal.type": "dbm", "kismet.common.signal.last_signal": -37},
+        }
+        view = f"/devices/views/seenby-{monitor_uuid.upper()}/devices.json"
+        self.api["POST", view] = {"data": [monitor], "recordsFiltered": 1}
+
+        def managed(mac, ssid, channel, signal):
+            return {"id": mac, "mac": mac, "name": ssid, "channel": channel,
+                    "frequency_mhz": {"1": 2412, "6": 2437, "36": 5180}[channel],
+                    "security": "[RSN-PSK-CCMP][ESS]", "rssi_dbm": signal,
+                    "source": "Managed Scan", "observed_at": started + 10, "kismet_reported": False}
+
+        scan = [managed(first, "Cafe", "6", -49), managed(second, "Cafe", "36", -60),
+                managed(case_variant, "cafe", "1", -55), managed(hidden1, None, "1", -70),
+                managed(hidden2, "", "1", -72)]
+        self.radio_scan.update(status="AVAILABLE", reason="", source_uuid=scan_uuid,
+                               observed_at=started + 10, access_points=scan)
+        self.call("get_access_points")
+        scan[0] = dict(scan[0], observed_at=started + 20, rssi_dbm=-46, channel="11", frequency_mhz=2462)
+        self.radio_scan["observed_at"] = started + 20
+        data = self.call("get_access_points")["structuredContent"]
+        self.assertEqual((data["network_count"], data["bssid_count"], data["channel_count"]), (4, 5, 3))
+        self.assertEqual(len(data["access_points"]), 5)
+        groups = data["networks"]
+        self.assertCountEqual([g["bssids"] for g in groups if not g["ssid"]], [[hidden1], [hidden2]])
+        self.assertEqual(next(g for g in groups if g["ssid"] == "cafe")["bssids"], [case_variant])
+        cafe = next(g for g in groups if g["ssid"] == "Cafe")
+        self.assertCountEqual(cafe["bssids"], [first, second])
+        self.assertEqual((cafe["bssid_count"], cafe["channel_count"]), (2, 2))
+        self.assertEqual((cafe["strongest_rssi_dbm"], cafe["weakest_rssi_dbm"]), (-46, -60))
+        self.assertEqual(cafe["last_seen"], started + 20)
+
+        ap = next(row for row in data["access_points"] if row["bssid"] == first)
+        self.assertCountEqual(ap["observation_sources"], ["managed_scan", "monitor_mode"])
+        for _ in range(2):  # Polling the same reports must not append more history.
+            detail = self.call("get_ap_details", {"ap_id": ap["id"]})["structuredContent"]
+            samples = [(row["timestamp"], row["rssi_dbm"], str(row["channel"]), row["observation_source"])
+                       for row in detail["observations"]]
+            self.assertEqual(samples, [
+                (started, -37, "6", "monitor_mode"),
+                (started + 10, -49, "6", "managed_scan"),
+                (started + 20, -46, "11", "managed_scan"),
+            ])
 
     def test_replay_requires_explicit_boolean_confirmation(self):
         self.initialize()

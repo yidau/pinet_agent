@@ -1,6 +1,7 @@
 """Single administrator-triggered nl80211 scan and Kismet scanreport submission."""
 
 import argparse
+from contextlib import closing
 import errno
 import json
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 import re
 import signal
 import socket
+import sqlite3
 import tempfile
 import time
 import uuid
@@ -18,6 +20,7 @@ from .kismet_adapter import KismetAdapter, KismetError
 STATE = Path("/run/piagent-managed-scan/status.json")
 MAX_APS = 128
 MAX_AGE = 300
+MAX_SAVED_POINTS = 4096
 
 
 def empty_state(reason, status="DEGRADED"):
@@ -73,6 +76,41 @@ def publish(result):
             os.replace(temp, STATE)
         finally:
             temp.unlink(missing_ok=True)
+
+
+def record_managed_history(source_uuid, points):
+    """Journal acknowledged scans even when no MCP client is reading the current status."""
+    if not points:
+        return
+    path = STATE.with_name("observations.sqlite3")
+    with closing(sqlite3.connect(path, timeout=1)) as db, db:
+        db.execute("""CREATE TABLE IF NOT EXISTS samples (
+            source_uuid TEXT, bssid TEXT, timestamp REAL, rssi_dbm REAL, channel TEXT,
+            UNIQUE (source_uuid, bssid, timestamp))""")
+        db.executemany("INSERT OR REPLACE INTO samples VALUES (?, ?, ?, ?, ?)", (
+            (source_uuid, row["mac"], row["observed_at"], row["rssi_dbm"], row["channel"]) for row in points))
+        db.execute("DELETE FROM samples WHERE rowid IN (SELECT rowid FROM samples ORDER BY rowid DESC LIMIT -1 OFFSET ?)",
+                   (MAX_SAVED_POINTS,))
+        first_seen = dict(db.execute("SELECT bssid, MIN(timestamp) FROM samples WHERE source_uuid=? GROUP BY bssid",
+                                     (source_uuid,)))
+    for row in points:
+        row["first_seen"] = first_seen[row["mac"]]
+
+
+def read_managed_history(source_uuid, bssid):
+    path = STATE.with_name("observations.sqlite3")
+    if not source_uuid:
+        return []
+    try:
+        with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=1)) as db:
+            rows = db.execute("""SELECT timestamp, rssi_dbm, channel FROM samples
+                                 WHERE source_uuid=? AND bssid=? ORDER BY timestamp DESC LIMIT 64""",
+                              (source_uuid, bssid))
+            return [{"timestamp": ts, "rssi_dbm": rssi, "channel": ch, "observation_source": "managed_scan"}
+                    for ts, rssi, ch in rows]
+    except (OSError, sqlite3.Error):
+        # Older helpers may have no journal. The service still has its measured session samples.
+        return []
 
 
 def wifi_channel(freq):
@@ -141,7 +179,7 @@ def access_point(bss, now, scan_seconds):
     caps = scan_security(elements, flags)
     return {"id": addr.lower(), "mac": addr.lower(), "name": ssid,
             "channel": str(channel) if channel else None, "frequency_mhz": freq,
-            "rssi_dbm": rssi, "security": caps, "observed_at": int(now - age_ms / 1000),
+            "rssi_dbm": rssi, "security": caps, "observed_at": round(now - age_ms / 1000, 3),
             "source": "Managed Scan", "kismet_reported": False}
 
 
@@ -151,7 +189,7 @@ def kismet_reports(points):
         # Kismet treats missing encryption as open, and drops records without radio data.
         if row["security"] is None or all(row[k] is None for k in ("channel", "frequency_mhz", "rssi_dbm")):
             continue
-        fields = {"timestamp": row["observed_at"], "bssid": row["mac"], "ssid": row["name"],
+        fields = {"timestamp": int(row["observed_at"]), "bssid": row["mac"], "ssid": row["name"],
                   "capabilities": row["security"], "channel": row["channel"], "signal": row["rssi_dbm"],
                   "freqkhz": row["frequency_mhz"] * 1000 if row["frequency_mhz"] else None}
         reports.append({k: v for k, v in fields.items() if v is not None})
@@ -185,6 +223,7 @@ def collect(interface, allow_shared_ap):
                 raise ScanUnavailable("The current interface mode does not support this managed scan.")
             start = time.monotonic()
             points = {}
+            earlier = []
             truncated = False
             for msg in radio.scan(ifindex, ssids=[""]):
                 bss = msg.get_attr("NL80211_ATTR_BSS")
@@ -196,8 +235,14 @@ def collect(interface, allow_shared_ap):
                 if len(points) == MAX_APS and row["mac"] not in points:
                     truncated = True
                     continue
+                previous = points.get(row["mac"])
+                if previous is not None:
+                    if previous["observed_at"] > row["observed_at"]:
+                        previous, row = row, previous
+                    if len(earlier) < MAX_APS:
+                        earlier.append(previous)
                 points[row["mac"]] = row
-            return list(points.values()), truncated
+            return list(points.values()), earlier, truncated
     except (NetlinkError, OSError) as exc:
         code = abs(getattr(exc, "code", None) or getattr(exc, "errno", None) or 0)
         if code in (0, errno.EACCES, errno.EPERM, errno.EBUSY, errno.ENODEV,
@@ -233,12 +278,16 @@ def run(mode):
         try:
             interface = os.environ["PIAGENT_SCAN_INTERFACE"]
             adapter = KismetAdapter(os.environ["PIAGENT_SCAN_URL"], os.environ["PIAGENT_SCAN_KEY"])
-            points, truncated = collect(interface, mode == "shared-ap")
+            points, earlier, truncated = collect(interface, mode == "shared-ap")
             reports = kismet_reports(points)
             adapter.submit_scan_report(source_uuid, f"PiAgent Managed Scan ({interface})", reports)
             reported = {row["bssid"] for row in reports}
             for row in points:
                 row["kismet_reported"] = row["mac"] in reported
+            try:
+                record_managed_history(source_uuid, [*earlier, *points])
+            except sqlite3.Error:
+                print("Managed scan history could not be saved; the current report is available.", flush=True)
             result.update(status="AVAILABLE", reason="", access_points=points,
                           observed_at=int(time.time()), truncated=truncated, submitted_count=len(reports),
                           withheld_unknown_security=sum(row["security"] is None for row in points))

@@ -22,8 +22,10 @@ NETWORK_TOOLS = {
     },
     "wireless_discovery": {
         "scan_wireless_environment": "Read an existing Wi-Fi observation summary. This query does not start a radio scan.",
-        "get_access_points": "List observed access points and their radio metadata.",
-        "get_ap_details": "Read observations for a selected access point.",
+        "get_access_points": "List current SSID networks, unique BSSIDs, observed channels and signal ranges. "
+                             "Each hidden SSID is grouped separately by BSSID. Counts cover the returned view.",
+        "get_ap_details": "Read the selected BSSID's radio metadata and bounded timestamped observation history, "
+                          "including the source of each sample. Accepts an AP id or BSSID from get_access_points.",
         "get_wireless_clients": "List wirelessly observed clients.",
         "get_wifi_channels": "Summarize observed wireless channels.",
     },

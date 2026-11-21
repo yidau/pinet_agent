@@ -1,8 +1,10 @@
-# PiAgent 0.7.0 · PocketNet AI
+# PiAgent · PocketNet AI
 
 PocketNet AI 让已注册的安卓手机通过树莓派热点查询系统状态和控制无线观测。V0.7.1 在 Wireless 页提供单次 Wi-Fi 扫描和限时蓝牙发现，在 Captures 页支持从手机导入 PCAP、PCAPNG 文件并控制离线重放。日常操作只需要手机和树莓派。 [手机操作及从 V0.7 更新](docs/phone-controls.md)
 
 首次注册时，手机扫描树莓派的永久二维码，通过蓝牙完成授权。每台手机使用独立的热点密码和 MCP 令牌。安装完成后，扫码注册、蓝牙校时和手机访问树莓派可以离线运行。使用 DeepSeek 聊天时，手机仍需能访问互联网。
+
+V0.7.4 的无线页按 SSID 展示附近网络。点开网络可查看各 BSSID、信号、信道及其观测历史。[手机操作与已有设备更新步骤](docs/phone-controls.md)
 
 ## 1. 准备一台新的 Ubuntu 树莓派
 

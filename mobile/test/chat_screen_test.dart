@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -34,6 +35,9 @@ class _DashboardConnection extends Connection {
   final bool v07;
   final bool phoneControl;
   bool sourceConnected = false;
+  Future<void>? bluetoothReadDelay;
+  Json? accessPointsReply;
+  Json? apDetailsReply;
 
   Map<String, String> get _domains => {
     'get_capability_status': 'device',
@@ -46,6 +50,7 @@ class _DashboardConnection extends Connection {
     'list_captures': 'packet_analysis',
     'get_capture_metadata': 'packet_analysis',
     if (v07) 'get_bluetooth_devices': 'bluetooth',
+    if (v07) 'get_ap_details': 'wireless_discovery',
     if (v07) 'get_capture_status': 'packet_analysis',
   };
 
@@ -87,7 +92,15 @@ class _DashboardConnection extends Connection {
               {
                 'name': name,
                 'description': 'Read $name.',
-                'inputSchema': {'type': 'object'},
+                'inputSchema': name == 'get_ap_details'
+                    ? {
+                        'type': 'object',
+                        'properties': {
+                          'ap_id': {'type': 'string'},
+                        },
+                        'required': ['ap_id'],
+                      }
+                    : {'type': 'object'},
                 'annotations': {'readOnlyHint': true},
               },
           ],
@@ -140,7 +153,10 @@ class _DashboardConnection extends Connection {
                                 sourceConnected &&
                                 entry.key == 'get_bluetooth_devices') ||
                             (sourceConnected &&
-                                entry.key == 'get_access_points')
+                                const {
+                                  'get_access_points',
+                                  'get_ap_details',
+                                }.contains(entry.key))
                         ? 'AVAILABLE'
                         : entry.value.startsWith('wireless')
                         ? 'DEGRADED'
@@ -157,18 +173,37 @@ class _DashboardConnection extends Connection {
               'kernel': 'test-kernel',
             };
           case 'get_access_points':
-            data = {
-              'access_points': [
+            data =
+                accessPointsReply ??
                 {
-                  'ssid': 'Test-lab',
-                  'rssi_dbm': -52,
-                  'channel': '36',
-                  if (v07) 'observation_source': 'managed_scan',
-                  if (v07) 'kismet_reported': false,
-                },
-              ],
-            };
+                  'access_points': [
+                    {
+                      'id': 'ap-test',
+                      'bssid': '02:00:00:00:00:02',
+                      'observed_at': 1770000000,
+                      'frequency_mhz': 5180,
+                      'ssid': 'Test-lab',
+                      'rssi_dbm': -52,
+                      'channel': '36',
+                      if (v07) 'observation_source': 'managed_scan',
+                      if (v07) 'kismet_reported': false,
+                    },
+                  ],
+                };
+          case 'get_ap_details':
+            expect(params['arguments'], {'ap_id': 'ap-test'});
+            data =
+                apDetailsReply ??
+                {
+                  'access_point': {
+                    'id': 'ap-test',
+                    'ssid': 'Test-lab',
+                    'security': '[RSN-SAE-CCMP][ESS]',
+                  },
+                  'source': 'managed_scan',
+                };
           case 'get_bluetooth_devices':
+            if (bluetoothReadDelay case final delay?) await delay;
             data = {
               'devices': [
                 {
@@ -244,13 +279,19 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('连接设备'));
       await tester.pumpAndSettle();
-      await tester.tap(_tab('Wireless'));
+      await tester.tap(_tab('无线'));
       await tester.pumpAndSettle();
       expect(
         calls.where((call) => call.startsWith('POST /operator/')),
         isEmpty,
       );
       await tester.tap(find.text('扫描 Wi-Fi'));
+      await tester.pumpAndSettle();
+      expect(
+        calls.where((call) => call.startsWith('POST /operator/')),
+        isEmpty,
+      );
+      await tester.tap(find.text('确认扫描'));
       await tester.pumpAndSettle();
       expect(
         calls.where((call) => call == 'POST /operator/radio/wifi-scan'),
@@ -265,14 +306,33 @@ void main() {
     (tester) async {
       await _phoneLayout(tester);
       final calls = <String>[];
-      final connection = _DashboardConnection(calls, v07: true);
+      final connection = _DashboardConnection(calls, v07: true)
+        ..accessPointsReply = {
+          'access_points': [
+            for (final (mac, id, signal, time) in [
+              ('02:00:00:00:00:02', 'old-ap-id', -82, 1770000000),
+              ('02:00:00:00:00:02', 'ap-test', -52, 1770000060),
+              ('02:00:00:00:00:03', 'second-bssid', -68, 1770000060),
+            ])
+              {
+                'id': id,
+                'mac': mac,
+                'name': 'Test-lab',
+                'channel': '36',
+                'rssi_dbm': signal,
+                'observed_at': time,
+                'observation_source': 'managed_scan',
+                'kismet_reported': false,
+              },
+          ],
+        };
       await tester.pumpWidget(
         PiAgentApp(history: _EmptyHistory(), initialConnection: connection),
       );
       await tester.pumpAndSettle();
       await tester.tap(find.text('连接设备'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('设备能力（11）'));
+      await tester.tap(find.text('设备能力（12）'));
       await tester.pumpAndSettle();
       for (final label in [
         'Wi-Fi Managed Scan · 条件不足',
@@ -283,24 +343,52 @@ void main() {
       ]) {
         expect(find.text(label), findsOneWidget);
       }
+      connection.sourceConnected = true;
+      await tester.tap(find.byTooltip('刷新设备能力'));
+      await tester.pumpAndSettle();
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      connection.sourceConnected = true;
-      await tester.tap(_tab('Wireless'));
+      await tester.tap(_tab('无线'));
       await tester.pumpAndSettle();
-      expect(find.text('Wi-Fi Networks'), findsOneWidget);
-      expect(find.text('Managed Scan'), findsOneWidget);
-      expect(find.text('扫描报告未写入 Kismet'), findsOneWidget);
-      expect(find.text('未知'), findsOneWidget);
+      expect(find.text('附近网络'), findsOneWidget);
+      await tester.ensureVisible(find.text('Test-lab'));
       expect(find.text('Test-lab'), findsOneWidget);
-      expect(find.text('Bluetooth Devices'), findsOneWidget);
+      await tester.tap(find.text('Test-lab'));
+      await tester.pumpAndSettle();
+      final bssid = find.text('02:00:00:00:00:02');
+      expect(bssid, findsOneWidget);
+      expect(find.text('02:00:00:00:00:03'), findsOneWidget);
+      await tester.ensureVisible(bssid);
+      await tester.tap(bssid);
+      await tester.pumpAndSettle();
+      expect(find.text('观测历史'), findsOneWidget);
+      expect(find.textContaining('WPA3'), findsWidgets);
+      expect(calls, contains('get_ap_details'));
+      await tester.scrollUntilVisible(
+        find.text('扫描报告未写入 Kismet'),
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('客户端').first);
+      await tester.tap(find.text('客户端').first);
+      await tester.pumpAndSettle();
+      expect(find.text('暂无客户端记录'), findsOneWidget);
+      await tester.tap(find.text('蓝牙').first);
+      await tester.pumpAndSettle();
+      expect(find.text('蓝牙设备'), findsOneWidget);
       expect(find.text('Lab beacon'), findsOneWidget);
-      expect(find.textContaining('Active Scan ·'), findsOneWidget);
-      await tester.tap(_tab('Captures'));
+      expect(find.text('Bluetooth Active Scan'), findsWidgets);
+      await tester.tap(_tab('采集'));
       await tester.pumpAndSettle();
       expect(find.text('lab-replay'), findsOneWidget);
-      expect(find.text('running'), findsOneWidget);
-      expect(find.textContaining('pcapng · 2.0 KiB'), findsOneWidget);
+      expect(find.text('进行中'), findsWidgets);
+      await tester.tap(find.text('PCAP 文件').first);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('2.0 KiB'), findsWidgets);
       await tester.tap(find.widgetWithText(ListTile, 'sample.pcapng'));
       await tester.pumpAndSettle();
       expect(find.text('文件元信息'), findsOneWidget);
@@ -323,7 +411,7 @@ void main() {
 
       expect(find.text('PocketNet AI'), findsOneWidget);
       expect(find.text('未连接'), findsOneWidget);
-      for (final label in ['Overview', 'Wireless', 'Captures', 'AI']) {
+      for (final label in ['概览', '无线', '采集', 'AI 助手']) {
         expect(_tab(label), findsOneWidget);
       }
 
@@ -342,45 +430,247 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
-      await tester.tap(_tab('Wireless'));
+      await tester.tap(_tab('无线'));
       await tester.pumpAndSettle();
-      expect(
-        find.text(
-          'Wireless monitoring is degraded: no supported capture source is available.',
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('暂无网络记录'), findsOneWidget);
       expect(find.text('已连接'), findsOneWidget);
-      expect(calls, [
-        'get_capability_status',
-        'get_system_info',
-        'get_capability_status',
-      ]);
+      expect(calls, isNot(contains('get_access_points')));
 
       connection.sourceConnected = true;
-      await tester.tap(_tab('Wireless'));
+      await tester.tap(find.text('设备能力（9）'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('刷新设备能力'));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(find.text('Test-lab'), findsOneWidget);
-      expect(find.text('-52 dBm'), findsOneWidget);
+      expect(find.textContaining('-52 dBm'), findsWidgets);
       expect(calls.last, 'get_access_points');
 
-      await tester.tap(_tab('Captures'));
+      await tester.tap(_tab('采集'));
       await tester.pumpAndSettle();
-      expect(find.text('报文采集尚未实现'), findsOneWidget);
+      expect(find.text('实时采集'), findsOneWidget);
+      await tester.tap(find.text('PCAP 文件').first);
+      await tester.pumpAndSettle();
+      expect(find.text('文件库暂不可用'), findsOneWidget);
       expect(find.text('已连接'), findsOneWidget);
 
-      await tester.tap(_tab('AI'));
+      await tester.tap(_tab('AI 助手'));
       await tester.pumpAndSettle();
-      expect(find.text('AI 调查'), findsOneWidget);
+      expect(find.text('调查当前网络'), findsOneWidget);
       expect(find.byTooltip('发送消息'), findsOneWidget);
 
-      await tester.tap(_tab('Overview'));
+      await tester.tap(_tab('概览'));
       await tester.pumpAndSettle();
       expect(find.text('已连接'), findsOneWidget);
-      expect(calls.where((name) => name == 'get_system_info'), hasLength(2));
+      expect(find.text('field-pi'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'a network opens its distinct BSSIDs and a single AP observation history',
+    (tester) async {
+      await _phoneLayout(tester);
+      const first = '02:00:00:00:00:02';
+      const second = '02:00:00:00:00:03';
+      const start = 1770000000;
+      const ap = {
+        'id': 'ap-test',
+        'ssid': 'Cafe',
+        'bssid': first,
+        'channel': '11',
+        'rssi_dbm': -46,
+        'observation_source': 'managed_scan',
+        'observation_sources': ['managed_scan', 'monitor_mode'],
+        'first_seen': start,
+        'last_seen': start + 10,
+      };
+      final calls = <String>[];
+      final connection = _DashboardConnection(calls, v07: true)
+        ..sourceConnected = true
+        ..accessPointsReply = {
+          'network_count': 1,
+          'bssid_count': 2,
+          'channel_count': 2,
+          'access_points': [
+            ap,
+            {
+              ...ap,
+              'id': 'second',
+              'bssid': second,
+              'channel': '36',
+              'rssi_dbm': -65,
+            },
+          ],
+          'networks': [
+            {
+              'ssid': 'Cafe',
+              'bssids': [first, second],
+              'bssid_count': 2,
+              'channel_count': 2,
+              'security_modes': [],
+              'strongest_rssi_dbm': -46,
+              'weakest_rssi_dbm': -65,
+              'last_seen': start + 10,
+            },
+          ],
+        }
+        ..apDetailsReply = {
+          'access_point': ap,
+          'observations': [
+            {
+              'timestamp': start,
+              'rssi_dbm': -77,
+              'channel': '6',
+              'observation_source': 'monitor_mode',
+            },
+            {
+              'timestamp': start + 10,
+              'rssi_dbm': -46,
+              'channel': '11',
+              'observation_source': 'managed_scan',
+            },
+          ],
+        };
+      await tester.pumpWidget(
+        PiAgentApp(history: _EmptyHistory(), initialConnection: connection),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('连接设备'));
+      await tester.pumpAndSettle();
+      await tester.tap(_tab('无线'));
+      await tester.pumpAndSettle();
+      final cafe = find.text('Cafe');
+      await tester.scrollUntilVisible(
+        cafe,
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(cafe, findsOneWidget);
+      await tester.tap(cafe);
+      await tester.pumpAndSettle();
+      expect(find.text(first), findsOneWidget);
+      expect(find.text(second), findsOneWidget);
+      await tester.tap(find.text(first));
+      await tester.pumpAndSettle();
+      expect(find.text('观测历史'), findsOneWidget);
+      expect(calls.where((name) => name == 'get_ap_details'), hasLength(1));
+      await tester.scrollUntilVisible(
+        find.textContaining('Monitor Mode · -77 dBm'),
+        160,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.textContaining('Monitor Mode · -77 dBm'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('接入点'));
+      await tester.tap(find.text('接入点'));
+      await tester.pumpAndSettle();
+      expect(find.text(first), findsOneWidget);
+      await tester.ensureVisible(find.text('信道'));
+      await tester.tap(find.text('信道'));
+      await tester.pumpAndSettle();
+      expect(find.text('信道 11'), findsOneWidget);
+      expect(find.text('信道 36'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('revisiting tabs retains the selected view and observed rows', (
+    tester,
+  ) async {
+    await _phoneLayout(tester);
+    final calls = <String>[];
+    final connection = _DashboardConnection(calls, v07: true)
+      ..sourceConnected = true;
+    await tester.pumpWidget(
+      PiAgentApp(history: _EmptyHistory(), initialConnection: connection),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('连接设备'));
+    await tester.pumpAndSettle();
+    await tester.tap(_tab('无线'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('蓝牙').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Lab beacon'), findsOneWidget);
+
+    await tester.tap(_tab('采集'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('PCAP 文件').first);
+    await tester.pumpAndSettle();
+    final file = find.widgetWithText(ListTile, 'sample.pcapng');
+    expect(file, findsOneWidget);
+
+    final beforeReturn = List.of(calls);
+    await tester.tap(_tab('无线'));
+    await tester.pump();
+    expect(find.text('Lab beacon'), findsOneWidget);
+    await tester.tap(_tab('采集'));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(file, findsOneWidget);
+    await tester.tap(_tab('无线'));
+    await tester.pumpAndSettle();
+    await tester.tap(_tab('无线'));
+    await tester.pumpAndSettle();
+    expect(find.text('Lab beacon'), findsOneWidget);
+    expect(calls, beforeReturn);
+
+    final delayed = Completer<void>();
+    connection.bluetoothReadDelay = delayed.future;
+    await tester.tap(find.text('设备能力（12）'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('刷新设备能力'));
+    await tester.pump();
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(
+      calls.where((name) => name == 'get_bluetooth_devices'),
+      hasLength(2),
+    );
+    expect(find.text('Lab beacon'), findsOneWidget);
+    expect(find.text('暂无蓝牙观测'), findsNothing);
+    delayed.complete();
+    await tester.pumpAndSettle();
+
+    await tester.tap(_tab('采集'));
+    await tester.pumpAndSettle();
+    expect(file, findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('all workspaces fit compact dark and wide light layouts', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 620));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(PiAgentApp(history: _EmptyHistory()));
+    await tester.pumpAndSettle();
+    for (final size in [const Size(320, 620), const Size(800, 720)]) {
+      if (size.width == 800) {
+        await tester.binding.setSurfaceSize(size);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('设备与外观设置'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('切换浅色外观'));
+        await tester.pumpAndSettle();
+        expect(
+          Theme.of(tester.element(_tab('概览'))).brightness,
+          Brightness.light,
+        );
+      }
+      for (final tab in ['概览', '无线', '采集', 'AI 助手']) {
+        await tester.tap(_tab(tab));
+        await tester.pumpAndSettle();
+        expect(find.text('连接设备'), findsOneWidget);
+        expect(tester.takeException(), isNull, reason: '$size / $tab');
+      }
+    }
+  });
 
   testWidgets('keeps the offline AI prompt and device settings', (
     tester,
@@ -388,8 +678,9 @@ void main() {
     await _phoneLayout(tester);
     await tester.pumpWidget(PiAgentApp(history: _EmptyHistory()));
     await tester.pumpAndSettle();
-    await tester.tap(_tab('AI'));
+    await tester.tap(_tab('AI 助手'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('查看网络状态'));
     await tester.tap(find.text('查看网络状态'));
     final composer = tester.widget<TextField>(find.byType(TextField));
     expect(composer.controller?.text, contains('网络信息'));

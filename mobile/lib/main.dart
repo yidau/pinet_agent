@@ -17,69 +17,41 @@ import 'mcp/tool_registry.dart';
 import 'network.dart';
 import 'storage/history.dart';
 import 'time_sync/time_sync_screen.dart';
-import 'ui/dashboard_pages.dart';
+import 'ui/capture_workspace.dart';
+import 'ui/console_style.dart';
+import 'ui/investigation_workspace.dart';
+import 'ui/overview_workspace.dart';
+import 'ui/wireless_workspace.dart';
 
 void main() => runApp(const PiAgentApp());
 
-class PiAgentApp extends StatelessWidget {
+class PiAgentApp extends StatefulWidget {
   const PiAgentApp({super.key, this.history, this.initialConnection});
-
   final History? history;
   final Connection? initialConnection;
+  @override
+  State<PiAgentApp> createState() => _PiAgentAppState();
+}
+
+class _PiAgentAppState extends State<PiAgentApp> {
+  ThemeMode _mode = ThemeMode.dark;
 
   @override
-  Widget build(BuildContext context) {
-    final colors =
-        ColorScheme.fromSeed(
-          seedColor: const Color(0xff57def3),
-          brightness: Brightness.dark,
-        ).copyWith(
-          primary: const Color(0xff57def3),
-          onPrimary: const Color(0xff062831),
-          surface: const Color(0xff0b1422),
-          surfaceContainer: const Color(0xff152234),
-          surfaceContainerLow: const Color(0xff111d2d),
-          surfaceContainerHigh: const Color(0xff1b2a3e),
-          onSurface: const Color(0xffedf5ff),
-          onSurfaceVariant: const Color(0xff9cafc5),
-          outlineVariant: const Color(0xff2b3e56),
-        );
-    return MaterialApp(
-      title: 'PocketNet AI',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: colors,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: colors.surface,
-        cardTheme: CardThemeData(
-          color: colors.surfaceContainerLow,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: colors.outlineVariant),
-          ),
-        ),
-        navigationBarTheme: NavigationBarThemeData(
-          backgroundColor: colors.surfaceContainerLow,
-          indicatorColor: colors.primary.withValues(alpha: 0.17),
-          iconTheme: WidgetStateProperty.resolveWith(
-            (states) => IconThemeData(
-              color: states.contains(WidgetState.selected)
-                  ? colors.primary
-                  : colors.onSurfaceVariant,
-            ),
-          ),
-        ),
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(16)),
-          ),
-          filled: true,
-        ),
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'PocketNet AI',
+    debugShowCheckedModeBanner: false,
+    theme: consoleTheme(Brightness.light),
+    darkTheme: consoleTheme(Brightness.dark),
+    themeMode: _mode,
+    home: ChatScreen(
+      history: widget.history,
+      initialConnection: widget.initialConnection,
+      toggleTheme: () => setState(
+        () =>
+            _mode = _mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark,
       ),
-      home: ChatScreen(history: history, initialConnection: initialConnection),
-    );
-  }
+    ),
+  );
 }
 
 class Connection {
@@ -138,7 +110,13 @@ class Connection {
 }
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, this.history, this.initialConnection});
+  const ChatScreen({
+    super.key,
+    this.history,
+    this.initialConnection,
+    this.toggleTheme,
+  });
+  final VoidCallback? toggleTheme;
 
   final History? history;
   final Connection? initialConnection;
@@ -147,12 +125,23 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen>
+    with SingleTickerProviderStateMixin {
+  static const _freshFor = Duration(seconds: 30);
+  final _elapsed = Stopwatch()..start();
+  late final _tabMotion = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 160),
+  );
+  Animation<Offset> _tabOffset = const AlwaysStoppedAnimation(Offset.zero);
+  final _workspaces = List<Widget?>.filled(4, null);
   final _draft = TextEditingController();
   final _device = DeviceConnection();
   late final _history = widget.history ?? History();
   final _entries = <ChatEntry>[];
   final _observations = <String, Json>{};
+  final _readAt = <String, Duration>{};
+  Duration _registryReadAt = Duration.zero;
   final _pendingObservations = <String>{};
   DeviceSession? _observationSession;
   ToolRegistry? _observationRegistry;
@@ -178,6 +167,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _tabMotion.dispose();
     _device.removeListener(_onDeviceChanged);
     _device.dispose();
     _client?.close();
@@ -196,10 +186,16 @@ class _ChatScreenState extends State<ChatScreen> {
       if (changedSession) {
         _observationSession = session;
         _conversationStart = _entries.length;
+        _observations.clear();
+        _workspaces.fillRange(0, _workspaces.length, null);
       }
       if (changedCapabilities) {
         _observationRegistry = session?.registry;
-        _observations.clear();
+        _registryReadAt = _elapsed.elapsed;
+        _readAt.clear();
+        _observations.removeWhere(
+          (name, _) => session?.registry[name]?.isCallable != true,
+        );
         _pendingObservations.clear();
       }
       if (session == null) {
@@ -213,9 +209,22 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _selectTab(int index) {
+    if (index == _selectedTab) return;
+    if (!MediaQuery.disableAnimationsOf(context)) {
+      _tabOffset = Tween(
+        begin: Offset(index > _selectedTab ? 0.025 : -0.025, 0),
+        end: Offset.zero,
+      ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(_tabMotion);
+      _tabMotion.forward(from: 0);
+    } else {
+      _tabMotion.stop();
+      _tabOffset = const AlwaysStoppedAnimation(Offset.zero);
+    }
     setState(() => _selectedTab = index);
     if (_device.session case final session?) {
-      if ((index == 1 || index == 2) && session.registry.kismet != null) {
+      if ((index == 1 || index == 2) &&
+          session.registry.kismet != null &&
+          _elapsed.elapsed - _registryReadAt >= _freshFor) {
         unawaited(_refreshCapabilities(session));
       } else {
         _loadObservations(session);
@@ -235,6 +244,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final names = switch (_selectedTab) {
       0 => [
         'get_system_info',
+        'get_cpu_info',
+        'get_capture_status',
+        'get_kismet_datasources',
         'get_network_profile',
         'get_access_points',
         'get_wireless_clients',
@@ -252,12 +264,20 @@ class _ChatScreenState extends State<ChatScreen> {
         'get_signal_history',
         'get_wireless_events',
       ],
-      2 => ['list_captures', 'get_capture_status'],
+      2 => [
+        'list_captures',
+        'get_capture_status',
+        'get_kismet_datasources',
+        'analyze_protocol_distribution',
+        'analyze_packet_capture',
+      ],
       _ => <String>[],
     };
     for (final name in names) {
       final tool = session.registry[name];
       if (tool == null || !tool.isCallable) continue;
+      final readAt = _readAt[name];
+      if (readAt != null && _elapsed.elapsed - readAt < _freshFor) continue;
       final requiredArguments = tool.inputSchema['required'];
       if ((requiredArguments is List && requiredArguments.isNotEmpty) ||
           !_pendingObservations.add(name)) {
@@ -282,6 +302,7 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _pendingObservations.remove(name);
       _observations[name] = result;
+      _readAt[name] = _elapsed.elapsed;
     });
   }
 
@@ -448,73 +469,129 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final session = _device.session;
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+    final enabled = !_busy && !_loading;
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    // Keep hidden tabs mounted without rebuilding their lists on every device reply.
+    _workspaces[_selectedTab] = _workspace(_selectedTab, session);
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 20,
-        title: const Text(
-          'PocketNet AI',
-          style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.2),
+        toolbarHeight: 54,
+        titleSpacing: 18,
+        title: Row(
+          children: [
+            if (_selectedTab == 0 || _selectedTab == 3) ...[
+              Icon(
+                _selectedTab == 0 ? Symbols.radar : Symbols.auto_awesome,
+                color: theme.colorScheme.primary,
+                size: 24,
+              ),
+              const SizedBox(width: 9),
+            ],
+            Expanded(
+              child: Text(
+                const ['PocketNet AI', '无线', '采集', 'AI 助手'][_selectedTab],
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
         actions: [
-          if (Platform.isAndroid || Platform.isIOS)
-            IconButton(
-              tooltip: '手机注册',
-              icon: const Icon(Symbols.qr_code_scanner),
-              onPressed: _busy || _loading ? null : _enrollmentSettings,
-            ),
-          if (Platform.isAndroid || Platform.isIOS)
-            IconButton(
-              tooltip: '蓝牙校时',
-              icon: const Icon(Symbols.schedule),
-              onPressed: _busy || _loading
-                  ? null
-                  : () => Navigator.of(context).push<void>(
+          PopupMenuButton<String>(
+            tooltip: '设备与外观设置',
+            icon: const Icon(Symbols.tune),
+            onSelected: (action) {
+              switch (action) {
+                case 'register':
+                  unawaited(_enrollmentSettings());
+                case 'clock':
+                  unawaited(
+                    Navigator.of(context).push<void>(
                       MaterialPageRoute(
                         builder: (_) => TimeSyncScreen(profile: _enrollment),
                       ),
                     ),
+                  );
+                case 'settings':
+                  unawaited(_settings());
+                case 'theme':
+                  widget.toggleTheme?.call();
+                case 'disconnect':
+                  unawaited(_device.disconnect());
+              }
+            },
+            itemBuilder: (context) => [
+              if (Platform.isAndroid || Platform.isIOS) ...[
+                _menu('register', Icons.qr_code_scanner, '手机注册', enabled),
+                _menu('clock', Icons.schedule, '蓝牙校时', enabled),
+              ],
+              _menu('settings', Icons.settings_outlined, '连接设置', enabled),
+              _menu(
+                'theme',
+                dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+                dark ? '切换浅色外观' : '切换深色外观',
+                true,
+              ),
+              if (session != null)
+                _menu('disconnect', Icons.link_off, '断开连接', true),
+            ],
+          ),
+          const SizedBox(width: 6),
+        ],
+      ),
+      bottomNavigationBar: keyboardOpen
+          ? null
+          : DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: theme.colorScheme.outlineVariant,
+                    width: 0.65,
+                  ),
+                ),
+              ),
+              child: NavigationBar(
+                selectedIndex: _selectedTab,
+                onDestinationSelected: _selectTab,
+                height:
+                    64 +
+                    (MediaQuery.textScalerOf(context).scale(12) - 12).clamp(
+                      0,
+                      24,
+                    ),
+                destinations: const [
+                  NavigationDestination(
+                    icon: Icon(Symbols.space_dashboard),
+                    selectedIcon: Icon(Symbols.space_dashboard, fill: 1),
+                    label: '概览',
+                  ),
+                  NavigationDestination(icon: Icon(Symbols.wifi), label: '无线'),
+                  NavigationDestination(
+                    icon: Icon(Symbols.folder_open),
+                    selectedIcon: Icon(Symbols.folder, fill: 1),
+                    label: '采集',
+                  ),
+                  NavigationDestination(
+                    icon: Icon(Symbols.auto_awesome),
+                    selectedIcon: Icon(Symbols.auto_awesome, fill: 1),
+                    label: 'AI 助手',
+                  ),
+                ],
+              ),
             ),
-          IconButton(
-            onPressed: _busy || _loading ? null : _settings,
-            icon: const Icon(Symbols.settings),
-            tooltip: _connection == null ? '配置连接' : '连接设置',
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedTab,
-        onDestinationSelected: _selectTab,
-        height: 68,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Symbols.dashboard),
-            selectedIcon: Icon(Symbols.dashboard, fill: 1),
-            label: 'Overview',
-          ),
-          NavigationDestination(icon: Icon(Symbols.wifi), label: 'Wireless'),
-          NavigationDestination(
-            icon: Icon(Symbols.folder),
-            selectedIcon: Icon(Symbols.folder, fill: 1),
-            label: 'Captures',
-          ),
-          NavigationDestination(
-            icon: Icon(Symbols.chat_bubble),
-            selectedIcon: Icon(Symbols.chat_bubble, fill: 1),
-            label: 'AI',
-          ),
-        ],
-      ),
       body: SafeArea(
         top: false,
-        bottom: false,
+        bottom: keyboardOpen,
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 960),
+            constraints: const BoxConstraints(maxWidth: 900),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
                   child: DevicePanel(
                     connection: _device,
                     endpoint: _connection?.mcp,
@@ -528,26 +605,33 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 if (_enrollmentWarning)
                   const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    padding: EdgeInsets.symmetric(horizontal: 16),
                     child: Text('无法读取手机的注册信息。可以重新扫码注册。'),
                   ),
                 Expanded(
-                  child: switch (_selectedTab) {
-                    0 => OverviewPage(
-                      session: session,
-                      observations: _observations,
-                      onOpenAi: () => _selectTab(3),
+                  child: ClipRect(
+                    child: SlideTransition(
+                      position: _tabOffset,
+                      textDirection: Directionality.of(context),
+                      child: IndexedStack(
+                        key: ObjectKey(session),
+                        index: _selectedTab,
+                        sizing: StackFit.expand,
+                        children: [
+                          for (
+                            var index = 0;
+                            index < _workspaces.length;
+                            index++
+                          )
+                            TickerMode(
+                              enabled: index == _selectedTab,
+                              child:
+                                  _workspaces[index] ?? const SizedBox.shrink(),
+                            ),
+                        ],
+                      ),
                     ),
-                    1 => WirelessPage(
-                      session: session,
-                      observations: _observations,
-                    ),
-                    2 => CapturesPage(
-                      session: session,
-                      observations: _observations,
-                    ),
-                    _ => _analysis(context),
-                  },
+                  ),
                 ),
               ],
             ),
@@ -557,157 +641,45 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _analysis(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('AI 调查', style: theme.textTheme.titleLarge),
-          if (_historyWarning)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text('本地历史记录暂不可用。'),
-            ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _entries.isEmpty
-                ? _welcome(context)
-                : ListView.builder(
-                    reverse: true,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    itemCount: _entries.length,
-                    itemBuilder: (context, index) =>
-                        _entry(context, _entries[_entries.length - 1 - index]),
-                  ),
-          ),
-          if (_busy) ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                _activeTool == null ? '正在分析…' : '正在调用 $_activeTool',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodySmall,
-              ),
-            ),
-            const LinearProgressIndicator(minHeight: 2),
-          ],
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _draft,
-                    maxLines: 5,
-                    minLines: 1,
-                    maxLength: 12000,
-                    decoration: const InputDecoration(
-                      hintText: '询问设备或网络状态…',
-                      counterText: '',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  onPressed: _busy || _loading ? null : _send,
-                  icon: const Icon(Icons.arrow_upward_rounded),
-                  tooltip: '发送消息',
-                  style: IconButton.styleFrom(minimumSize: const Size(48, 52)),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _workspace(int index, DeviceSession? session) => switch (index) {
+    0 => OverviewWorkspace(
+      session: session,
+      observations: _observations,
+      aiFinding: session == null
+          ? null
+          : latestEvidenceFinding(_entries.skip(_conversationStart)),
+      onOpenAi: () => _selectTab(3),
+    ),
+    1 => WirelessWorkspace(session: session, observations: _observations),
+    2 => CaptureWorkspace(session: session, observations: _observations),
+    _ => InvestigationWorkspace(
+      entries: _entries,
+      draft: _draft,
+      activeTool: _activeTool,
+      busy: _busy,
+      loading: _loading,
+      historyWarning: _historyWarning,
+      connected: session != null,
+      onSend: _send,
+    ),
+  };
 
-  Widget _welcome(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: 24),
-        child: Column(
-          children: [
-            Text('询问当前设备的观测数据', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 12),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final (label, prompt) in [
-                  ('查看系统状态', '查看树莓派的系统信息、CPU、内存、磁盘和温度。'),
-                  ('查看网络状态', '查看树莓派当前可用的网络信息。'),
-                ])
-                  ActionChip(
-                    label: Text(label),
-                    onPressed: () => _draft.text = prompt,
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _entry(BuildContext context, ChatEntry entry) {
-    final colors = Theme.of(context).colorScheme;
-    if (entry.role == 'tool' || entry.role == 'error') {
-      final color = entry.role == 'error'
-          ? colors.error
-          : colors.onSurfaceVariant;
-      if (entry.details?.isNotEmpty == true) {
-        return ExpansionTile(
-          leading: Icon(Icons.terminal, size: 18, color: color),
-          title: Text(entry.text, style: TextStyle(color: color)),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: SelectableText(
-                entry.details!,
-                style: const TextStyle(fontFamily: 'monospace'),
-              ),
-            ),
-          ],
-        );
-      }
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 12),
-        child: Text(entry.text, style: TextStyle(color: color)),
-      );
-    }
-    final user = entry.role == 'user';
-    return Align(
-      alignment: user ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 570),
-        margin: EdgeInsets.only(
-          left: user ? 36 : 0,
-          right: user ? 0 : 36,
-          top: 6,
-          bottom: 6,
-        ),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: user ? colors.primaryContainer : colors.surfaceContainer,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: SelectableText(
-          entry.text,
-          style: TextStyle(
-            color: user ? colors.onPrimaryContainer : colors.onSurface,
-          ),
-        ),
-      ),
-    );
-  }
+  PopupMenuEntry<String> _menu(
+    String value,
+    IconData icon,
+    String label,
+    bool enabled,
+  ) => PopupMenuItem<String>(
+    value: value,
+    enabled: enabled,
+    child: Row(
+      children: [
+        Icon(icon, size: 20),
+        const SizedBox(width: 12),
+        Flexible(child: Text(label)),
+      ],
+    ),
+  );
 }
 
 class _ConnectionDialog extends StatefulWidget {
