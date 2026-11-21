@@ -43,7 +43,7 @@ class Agent {
   }) async {
     final connected = session;
     if (connected == null || !connected.isActive) return disconnectedReply;
-    final tools = connected.registry.tools;
+    final tools = connected.registry.callableTools;
     if (tools.isEmpty) return '已连接设备，当前没有可用的只读查询工具。';
     final names = {for (final tool in tools) tool.name};
     final modelTools = <String, DeviceTool>{};
@@ -129,12 +129,11 @@ class Agent {
         }
         if (!connected.isActive) return disconnectedReply;
         final failed = result['ok'] == false;
-        final output = result['output'];
         onEvent(
           ToolEvent(
             '$name · ${failed ? '失败' : '完成'}',
             failed: failed,
-            output: output is String ? output : null,
+            output: _displayResult(result),
           ),
         );
         messages.add({
@@ -145,5 +144,15 @@ class Agent {
       }
     }
     throw const FormatException('本次查询达到执行次数上限。');
+  }
+
+  String _displayResult(Json result) {
+    final output = result['output'];
+    if (output is String && output.isNotEmpty) return output;
+    final formatted = const JsonEncoder.withIndent('  ').convert(result);
+    const maxLength = 12000;
+    return formatted.length > maxLength
+        ? '${formatted.substring(0, maxLength)}…'
+        : formatted;
   }
 }

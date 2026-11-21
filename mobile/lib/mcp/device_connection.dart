@@ -56,7 +56,16 @@ class DeviceConnection extends ChangeNotifier {
 
       final entries = await client.listTools();
       if (connectionId != _connectionId) return;
-      _session = DeviceSession._(this, client, ToolRegistry.fromTools(entries));
+      final capabilities =
+          entries.any((entry) => entry['name'] == 'get_capability_status')
+          ? await _discoverCapabilities(client)
+          : null;
+      if (connectionId != _connectionId) return;
+      _session = DeviceSession._(
+        this,
+        client,
+        ToolRegistry.fromTools(entries, capabilities: capabilities),
+      );
       _update(DeviceConnectionStatus.ready);
     } on McpConnectionException catch (error) {
       if (connectionId == _connectionId) _connectionFailed(error.message);
@@ -67,6 +76,15 @@ class DeviceConnection extends ChangeNotifier {
         _connectionFailed('连接失败，请检查设备地址和网络。');
       }
     }
+  }
+
+  Future<List<Json>> _discoverCapabilities(McpClient client) async {
+    final result = await client.callTool('get_capability_status', {});
+    final entries = result['capabilities'];
+    if (result['ok'] == false || entries is! List) {
+      throw const FormatException('树莓派返回了无效的能力状态清单');
+    }
+    return entries.map((entry) => jsonObject(entry, '工具状态')).toList();
   }
 
   Future<void> disconnect() async {

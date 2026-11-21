@@ -5,6 +5,14 @@ import 'package:material_ui/material_ui.dart';
 import 'device_connection.dart';
 import 'tool_registry.dart';
 
+String capabilityStatusLabel(CapabilityStatus status) => switch (status) {
+  CapabilityStatus.available => '可用',
+  CapabilityStatus.unavailable => '未实现',
+  CapabilityStatus.degraded => '条件不足',
+  CapabilityStatus.error => '运行错误',
+  CapabilityStatus.unknown => '未报告',
+};
+
 class DevicePanel extends StatelessWidget {
   const DevicePanel({
     super.key,
@@ -22,6 +30,7 @@ class DevicePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final status = connection.status;
     final statusLabel = switch (status) {
       DeviceConnectionStatus.disconnected => '未连接',
@@ -30,21 +39,52 @@ class DevicePanel extends StatelessWidget {
       DeviceConnectionStatus.ready => '已连接',
       DeviceConnectionStatus.error => '连接失败',
     };
-    final canDisconnect =
-        status == DeviceConnectionStatus.connecting ||
-        status == DeviceConnectionStatus.discovering ||
-        status == DeviceConnectionStatus.ready;
+    final statusColor = switch (status) {
+      DeviceConnectionStatus.ready => const Color(0xff63dca3),
+      DeviceConnectionStatus.error => colors.error,
+      DeviceConnectionStatus.connecting ||
+      DeviceConnectionStatus.discovering => colors.primary,
+      DeviceConnectionStatus.disconnected => colors.onSurfaceVariant,
+    };
+    final canDisconnect = switch (status) {
+      DeviceConnectionStatus.connecting ||
+      DeviceConnectionStatus.discovering ||
+      DeviceConnectionStatus.ready => true,
+      DeviceConnectionStatus.disconnected ||
+      DeviceConnectionStatus.error => false,
+    };
     final session = connection.session;
 
     return Card(
       margin: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-            child: Row(
+      color: colors.surfaceContainerLow,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: colors.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
               children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.lan_outlined,
+                      color: colors.primary,
+                      size: 20,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -57,21 +97,11 @@ class DevicePanel extends StatelessWidget {
                       ),
                       Text(
                         endpoint?.toString() ?? '未配置设备地址',
-                        style: theme.textTheme.bodySmall,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        statusLabel,
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: switch (status) {
-                            DeviceConnectionStatus.error =>
-                              theme.colorScheme.error,
-                            DeviceConnectionStatus.ready =>
-                              theme.colorScheme.primary,
-                            _ => theme.colorScheme.onSurfaceVariant,
-                          },
-                        ),
                       ),
                     ],
                   ),
@@ -86,27 +116,40 @@ class DevicePanel extends StatelessWidget {
                   FilledButton(onPressed: onConnect, child: const Text('连接设备')),
               ],
             ),
-          ),
-          if (connection.error case final reason?)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Text(
-                reason,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.error,
+            Row(
+              children: [
+                Icon(Icons.circle, color: statusColor, size: 8),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    statusLabel,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: statusColor,
+                    ),
+                  ),
+                ),
+                if (session != null)
+                  TextButton.icon(
+                    onPressed: () => _showCapabilities(context, session),
+                    icon: const Icon(Icons.view_list_outlined, size: 18),
+                    label: Text('设备能力（${session.registry.tools.length}）'),
+                  )
+                else
+                  const SizedBox(height: 28),
+              ],
+            ),
+            if (connection.error case final reason?)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  reason,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.error,
+                  ),
                 ),
               ),
-            ),
-          if (session != null)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => _showCapabilities(context, session),
-                icon: const Icon(Icons.list_alt),
-                label: Text('设备能力（${session.registry.tools.length}）'),
-              ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -117,82 +160,50 @@ class DevicePanel extends StatelessWidget {
   ) async {
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       showDragHandle: true,
       builder: (context) => SafeArea(
-        child: ListenableBuilder(
-          listenable: connection,
-          builder: (context, _) {
-            if (!identical(connection.session, session)) {
-              return const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text('设备连接已断开。'),
-              );
-            }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                  child: Text(
-                    '设备能力',
-                    style: Theme.of(context).textTheme.titleMedium,
+        top: false,
+        child: FractionallySizedBox(
+          heightFactor: 0.78,
+          child: ListenableBuilder(
+            listenable: connection,
+            builder: (context, _) {
+              if (!identical(connection.session, session)) {
+                return const Center(child: Text('设备连接已断开。'));
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Text(
+                      '设备能力',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                   ),
-                ),
-                _Capabilities(tools: session.registry.tools),
-              ],
-            );
-          },
+                  const Divider(height: 1),
+                  Expanded(child: _Capabilities(tools: session.registry.tools)),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
   }
 }
 
-enum _CapabilityGroup {
-  device('设备信息'),
-  network('网络信息'),
-  other('其他能力');
-
-  const _CapabilityGroup(this.label);
-
-  final String label;
-
-  static _CapabilityGroup forTool(DeviceTool tool) {
-    final text = '${tool.name.replaceAll('_', ' ')} ${tool.description}'
-        .toLowerCase();
-    const networkTerms = [
-      'network',
-      'wi-fi',
-      'wifi',
-      'wireless',
-      'access point',
-      'ip address',
-      '网络',
-      '网卡',
-      '无线',
-      '接入点',
-      '信道',
-      '路由',
-    ];
-    const deviceTerms = [
-      'system',
-      'device',
-      'cpu',
-      'memory',
-      'disk',
-      'temperature',
-      '系统',
-      '设备',
-      '内存',
-      '磁盘',
-      '温度',
-    ];
-    if (networkTerms.any((term) => text.contains(term))) return network;
-    if (deviceTerms.any((term) => text.contains(term))) return device;
-    return other;
-  }
-}
+const _domains = <String, (String, IconData)>{
+  'device': ('设备信息', Icons.memory_outlined),
+  'wireless_discovery': ('无线发现', Icons.wifi_find),
+  'wireless_monitoring': ('无线监测', Icons.monitor_heart_outlined),
+  'network_discovery': ('网络发现', Icons.hub_outlined),
+  'packet_analysis': ('报文分析', Icons.layers_outlined),
+  'security_analysis': ('安全分析', Icons.shield_outlined),
+  'network_diagnosis': ('网络诊断', Icons.fact_check_outlined),
+};
 
 class _Capabilities extends StatelessWidget {
   const _Capabilities({required this.tools});
@@ -202,53 +213,93 @@ class _Capabilities extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (tools.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: Text('设备没有提供可用的只读工具。'),
-      );
+      return const Center(child: Text('设备没有注册 MCP 工具。'));
     }
-    final groups = <_CapabilityGroup, List<DeviceTool>>{};
+    final groups = <String, List<DeviceTool>>{};
     for (final tool in tools) {
-      groups.putIfAbsent(_CapabilityGroup.forTool(tool), () => []).add(tool);
+      final domain = _domains.containsKey(tool.domain) ? tool.domain : 'other';
+      groups.putIfAbsent(domain, () => []).add(tool);
     }
     final theme = Theme.of(context);
-    return ConstrainedBox(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.36,
-      ),
-      child: ListView(
-        primary: false,
-        shrinkWrap: true,
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-        children: [
-          for (final group in _CapabilityGroup.values)
-            if (groups[group] case final entries?) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(group.label, style: theme.textTheme.labelLarge),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      children: [
+        for (final domain in [..._domains.keys, 'other'])
+          if (groups[domain] case final entries?) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    _domains[domain]?.$2 ?? Icons.more_horiz,
+                    size: 18,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _domains[domain]?.$1 ?? '其他能力',
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ],
               ),
-              for (final tool in entries)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        tool.name,
-                        style: theme.textTheme.bodyMedium,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        tool.description,
-                        style: theme.textTheme.bodySmall,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+            ),
+            for (final tool in entries) _CapabilityRow(tool: tool),
+          ],
+      ],
+    );
+  }
+}
+
+class _CapabilityRow extends StatelessWidget {
+  const _CapabilityRow({required this.tool});
+
+  final DeviceTool tool;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final color = switch (tool.status) {
+      CapabilityStatus.available => const Color(0xff63dca3),
+      CapabilityStatus.error => colors.error,
+      CapabilityStatus.degraded => const Color(0xffffc477),
+      CapabilityStatus.unavailable ||
+      CapabilityStatus.unknown => colors.onSurfaceVariant,
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(tool.name, style: theme.textTheme.bodyMedium),
+                const SizedBox(height: 4),
+                Text(
+                  tool.description,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
                   ),
                 ),
-            ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Text(
+                capabilityStatusLabel(tool.status),
+                style: theme.textTheme.labelSmall?.copyWith(color: color),
+              ),
+            ),
+          ),
         ],
       ),
     );

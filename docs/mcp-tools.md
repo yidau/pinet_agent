@@ -1,5 +1,7 @@
 # 树莓派 MCP 工具清单与验证
 
+本文记录 V0.4 的 MCP 工具整理与实机结果。V0.5 请查阅 [PocketNet MCP 能力状态](v0.5-capabilities.md)。
+
 ## `aa2f817` 基线清单
 
 11 个工具都由 `raspberry/mcp_server/server.py` 注册。FastMCP 提供标准 `tools/list` 和 `tools/call`，通过 Starlette ASGI 应用在 `/mcp` 提供无状态 Streamable HTTP 和 JSON 响应，由 Uvicorn 运行。

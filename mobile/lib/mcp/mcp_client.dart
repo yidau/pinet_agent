@@ -45,7 +45,7 @@ class McpClient {
     final reply = await _request('initialize', {
       'protocolVersion': _preferredVersion,
       'capabilities': <String, Object?>{},
-      'clientInfo': {'name': 'PiAgent mobile', 'version': '0.4.0'},
+      'clientInfo': {'name': 'PiAgent mobile', 'version': '0.5.0'},
     });
     final version = reply['protocolVersion'];
     if (!_supportedVersions.contains(version)) {
@@ -94,7 +94,8 @@ class McpClient {
       'arguments': arguments,
     });
     final structured = result['structuredContent'];
-    if (result['isError'] != true && structured is Json) {
+    final failed = result['isError'] == true;
+    if (!failed && structured is Json) {
       return structured;
     }
     final content = result['content'];
@@ -106,7 +107,12 @@ class McpClient {
               .whereType<String>()
               .join('\n')
         : '';
-    return {'ok': result['isError'] != true, 'output': text};
+    final message = structured is Json ? structured['message'] : null;
+    return {
+      if (failed && structured is Json) ...structured,
+      'ok': !failed,
+      'output': text.isEmpty && message is String ? message : text,
+    };
   }
 
   Future<void> close() => _closing ??= _disconnect();

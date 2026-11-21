@@ -24,7 +24,6 @@ from raspberry.enrollment.protocol import (
     REQUEST_DOMAIN, RESPONSE_KEY, b64, decode, load_public, public_bytes, qr_key, transcript,
 )
 from raspberry.enrollment.registry import Registry
-from raspberry.mcp_server.sandbox import DockerSandbox
 from raspberry.mcp_server.server import create_app
 from raspberry.time_sync.ble_server import TimeSync
 from raspberry.time_sync.protocol import PROBE, REQUEST, STATUS
@@ -179,7 +178,7 @@ class EnrollmentAcceptance(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sync.session.probes[1].t2, 1_800_000_000_400)
 
     def client(self):
-        app = create_app(self.state / "workspace", "a" * 32, [], DockerSandbox("unused"), self.registry.database)
+        app = create_app(self.state, "a" * 32, [], self.registry.database)
         return TestClient(app, base_url="https://127.0.0.1")
 
     @staticmethod

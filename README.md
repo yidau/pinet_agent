@@ -1,6 +1,6 @@
-# PiAgent 0.4.0
+# PiAgent 0.5.0 · PocketNet AI
 
-PiAgent 是便携式 Wi-Fi 网络分析设备的手机助手。手机负责对话和云端模型调用，树莓派通过 MCP 返回设备状态和实际可用的网络观测数据。
+PocketNet AI 是 PiAgent 的手机仪表盘。手机负责展示观测结果和发起 AI 调查，树莓派通过 MCP 提供系统、CPU、内存和磁盘状态。能力面板同时显示规划中的网络分析工具及其状态。
 
 首次注册时，手机扫描树莓派的永久二维码，通过蓝牙完成授权。每台手机使用独立的热点密码和 MCP 令牌。安装完成后，扫码注册、蓝牙校时和手机访问树莓派可以离线运行。使用 DeepSeek 聊天时，手机仍需能访问互联网。
 
@@ -13,7 +13,7 @@ PiAgent 是便携式 Wi-Fi 网络分析设备的手机助手。手机负责对�
 ```bash
 sudo apt update
 sudo apt install -y git python3-venv bluez rfkill hostapd dnsmasq-base openssl curl iproute2
-git clone --branch v0.4.0 https://gitee.com/zhaojiayi1101/piagent.git
+git clone --branch v0.5.0 https://gitee.com/zhaojiayi1101/piagent.git
 cd piagent
 ```
 
@@ -238,10 +238,10 @@ sudo install -m 0600 -o "$(id -u)" -g "$(id -g)" \
 
 ## 5. 连接设备并查询
 
-1. 在聊天页点「连接设备」。App 初始化 MCP 会话并调用 `tools/list`，加载完成后显示「已连接」。
-2. 点「设备能力」查看当前会话可用的只读查询。设备通过 `annotations.readOnlyHint` 声明只读工具。Agent 调用前会核对工具所属会话和参数 Schema，树莓派服务负责权限判断。
-3. 发送「查看树莓派系统状态」。网络查询需要当前设备提供相应的只读 MCP 工具。默认树莓派服务提供系统、CPU、内存和磁盘信息。
-4. 点「断开连接」清除会话和工具列表。设备或工具配置变化时，可重新连接以刷新能力。 [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+1. 在顶部设备面板点「连接设备」。App 初始化 MCP 会话，调用 `tools/list` 和 `get_capability_status`，加载完成后显示「已连接」。
+2. 点「设备能力」查看所有已注册工具及状态。Agent 只使用设备确认为 `AVAILABLE` 的只读工具，调用前校验会话和参数。树莓派负责判断调用权限。
+3. Overview 显示设备与网络观测，Wireless 和 Captures 根据能力显示数据或空状态。打开 AI 后可发送「查看树莓派系统状态」。
+4. 点「断开连接」清除会话和工具列表。重新连接会刷新工具及状态。 [V0.5 能力状态与部署](docs/v0.5-capabilities.md) · [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 ## 运维与验收
 
@@ -255,7 +255,7 @@ sudo journalctl -u piagent-ble-time-sync -u piagent-mcp -u piagent-hotspot -n 80
 
 用 `admin revoke DEVICE_ID` 可撤销指定手机。设备将失去热点、校时和 MCP 权限。已有 V0.3 树莓派可沿用原服务与注册信息。 [扫码、校时与授权记录](docs/v0.3-enrollment.md)
 
-V0.4 的四个本地模拟用例覆盖连接、重连、重新发现工具、参数校验和查询错误。网络查询使用模拟 MCP 工具。手机登录、热点、BLE 校时和现有设备工具的实机回归按本次验收约定跳过。
+本地验证覆盖 MCP 能力发现、认证、设备查询，以及 Flutter 连接、可用状态过滤、页签切换和空状态。实机验收项目见 [V0.5 能力文档](docs/v0.5-capabilities.md)。
 
 ```bash
 cd mobile
