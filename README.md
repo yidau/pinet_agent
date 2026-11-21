@@ -1,6 +1,6 @@
-# PiAgent 0.3.0
+# PiAgent 0.4.0
 
-用手机管理 Raspberry Pi 和开发 Linux 程序。手机负责 Agent 决策和云端模型调用，树莓派执行 MCP 工具。App 可以读取系统状态、管理工作区，并在配置 Rootless Docker 后编译 C++17 项目和运行 CTest。
+PiAgent 是便携式 Wi-Fi 网络分析设备的手机助手。手机负责对话和云端模型调用，树莓派通过 MCP 返回设备状态和实际可用的网络观测数据。
 
 首次注册时，手机扫描树莓派的永久二维码，通过蓝牙完成授权。每台手机使用独立的热点密码和 MCP 令牌。安装完成后，扫码注册、蓝牙校时和手机访问树莓派可以离线运行。使用 DeepSeek 聊天时，手机仍需能访问互联网。
 
@@ -13,7 +13,7 @@
 ```bash
 sudo apt update
 sudo apt install -y git python3-venv bluez rfkill hostapd dnsmasq-base openssl curl iproute2
-git clone --branch v0.3.0 https://gitee.com/zhaojiayi1101/piagent.git
+git clone --branch v0.4.0 https://gitee.com/zhaojiayi1101/piagent.git
 cd piagent
 ```
 
@@ -236,20 +236,12 @@ sudo install -m 0600 -o "$(id -u)" -g "$(id -g)" \
 
 永久二维码用于授权新手机，应由设备所有者保管。后续注册可继续使用这张二维码。请勿将二维码、设备数据库、证书私钥或 API Key 上传到 Gitee。
 
-## 5. 可选配置 C++ 编译和 CTest
+## 5. 连接设备并查询
 
-用第 3 步运行 MCP 的同一个普通用户安装 Rootless Docker，确认启用 cgroup v2、seccomp 及 CPU、内存、交换区和 PID 限制。Ubuntu 上可按 Docker 官方说明安装 `docker-ce-rootless-extras`，然后由普通用户执行以下命令。 [Rootless Docker 安装](https://docs.docker.com/engine/security/rootless/) · [资源限制配置](https://docs.docker.com/engine/security/rootless/tips/#limiting-resources)
-
-```bash
-dockerd-rootless-setuptool.sh install
-sudo loginctl enable-linger "$(id -un)"
-systemctl --user enable --now docker.service
-export DOCKER_HOST="unix://${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/docker.sock"
-docker info
-docker build -t piagent-builder:0.1 raspberry/config
-```
-
-完成后，在 App 发送 C++17 验收任务，查看 CMake 编译和 CTest 的实际结果。设备代码工作区为 `/var/lib/piagent-mcp/workspace`。编译容器使用工作区快照，运行时没有网络和宿主机目录挂载。
+1. 在聊天页点「连接设备」。App 初始化 MCP 会话并调用 `tools/list`，加载完成后显示「已连接」。
+2. 点「设备能力」查看当前会话可用的只读查询。设备通过 `annotations.readOnlyHint` 声明只读工具。Agent 调用前会核对工具所属会话和参数 Schema，树莓派服务负责权限判断。
+3. 发送「查看树莓派系统状态」。网络查询需要当前设备提供相应的只读 MCP 工具。默认树莓派服务提供系统、CPU、内存和磁盘信息。
+4. 点「断开连接」清除会话和工具列表。设备或工具配置变化时，可重新连接以刷新能力。 [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 ## 运维与验收
 
@@ -261,4 +253,11 @@ sudo -u piagent-ble .venv/bin/python -m raspberry.enrollment.admin registration 
 sudo journalctl -u piagent-ble-time-sync -u piagent-mcp -u piagent-hotspot -n 80 --no-pager
 ```
 
-用 `admin revoke DEVICE_ID` 可撤销指定手机。设备将失去热点、校时和 MCP 权限。V0.3 已实测单机扫码、校时、热点和 MCP 访问，以及撤销和恢复。断电重启后注册新手机、双手机撤销和 iOS 构建仍待验证。每项实机测试超过 4 分钟可记录为跳过。 [实机验收记录与协议](docs/v0.3-enrollment.md)
+用 `admin revoke DEVICE_ID` 可撤销指定手机。设备将失去热点、校时和 MCP 权限。已有 V0.3 树莓派可沿用原服务与注册信息。 [扫码、校时与授权记录](docs/v0.3-enrollment.md)
+
+V0.4 的四个本地模拟用例覆盖连接、重连、重新发现工具、参数校验和查询错误。网络查询使用模拟 MCP 工具。手机登录、热点、BLE 校时和现有设备工具的实机回归按本次验收约定跳过。
+
+```bash
+cd mobile
+flutter test test/agent_test.dart test/chat_screen_test.dart
+```

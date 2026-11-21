@@ -9,6 +9,8 @@ import 'enrollment/enrollment_profile.dart';
 import 'enrollment/enrollment_screen.dart';
 import 'llm/deepseek.dart';
 import 'llm/llm_client.dart';
+import 'mcp/device_connection.dart';
+import 'mcp/device_panel.dart';
 import 'mcp/mcp_client.dart';
 import 'network.dart';
 import 'storage/history.dart';
@@ -17,9 +19,10 @@ import 'time_sync/time_sync_screen.dart';
 void main() => runApp(const PiAgentApp());
 
 class PiAgentApp extends StatelessWidget {
-  const PiAgentApp({super.key, this.history});
+  const PiAgentApp({super.key, this.history, this.initialConnection});
 
   final History? history;
+  final Connection? initialConnection;
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +41,7 @@ class PiAgentApp extends StatelessWidget {
           filled: true,
         ),
       ),
-      home: ChatScreen(history: history),
+      home: ChatScreen(history: history, initialConnection: initialConnection),
     );
   }
 }
@@ -99,9 +102,10 @@ class Connection {
 }
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, this.history});
+  const ChatScreen({super.key, this.history, this.initialConnection});
 
   final History? history;
+  final Connection? initialConnection;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -109,12 +113,13 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _draft = TextEditingController();
+  final _device = DeviceConnection();
   late final _history = widget.history ?? History();
   final _entries = <ChatEntry>[];
+  int _conversationStart = 0;
   Connection? _connection;
   EnrollmentProfile? _enrollment;
   http.Client? _client;
-  http.Client? _mcpClient;
   String? _activeTool;
   bool _busy = false;
   bool _loading = true;
@@ -124,16 +129,46 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _connection = Connection.fromBuildConfiguration();
+    _connection =
+        widget.initialConnection ?? Connection.fromBuildConfiguration();
+    _device.addListener(_onDeviceChanged);
     unawaited(_restore());
   }
 
   @override
   void dispose() {
+    _device.removeListener(_onDeviceChanged);
+    _device.dispose();
     _client?.close();
-    _mcpClient?.close();
     _draft.dispose();
     super.dispose();
+  }
+
+  void _onDeviceChanged() {
+    setState(() {
+      if (_device.session == null) {
+        _client?.close();
+        _client = null;
+        _activeTool = null;
+        _busy = false;
+      }
+      if (_device.status == DeviceConnectionStatus.ready) {
+        _conversationStart = _entries.length;
+      }
+    });
+  }
+
+  Future<void> _connect() async {
+    final connection = _connection;
+    if (connection == null) {
+      await _settings();
+      return;
+    }
+    await _device.connect(
+      endpoint: connection.mcp,
+      token: connection.token,
+      createHttpClient: connection.deviceClient,
+    );
   }
 
   Future<void> _restore() async {
@@ -160,11 +195,27 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _useEnrollment(EnrollmentProfile profile) => setState(() {
-    _enrollment = profile;
-    _connection = Connection.fromEnrollment(profile, _connection);
-    _enrollmentWarning = false;
-  });
+  void _useEnrollment(EnrollmentProfile profile) => _setConnection(
+    Connection.fromEnrollment(profile, _connection),
+    enrollment: profile,
+  );
+
+  void _setConnection(Connection connection, {EnrollmentProfile? enrollment}) {
+    final previous = _connection;
+    if (previous != null &&
+        (previous.mcp != connection.mcp ||
+            previous.token != connection.token ||
+            previous.enrollmentCa != connection.enrollmentCa)) {
+      unawaited(_device.disconnect());
+    }
+    setState(() {
+      _connection = connection;
+      if (enrollment != null) {
+        _enrollment = enrollment;
+        _enrollmentWarning = false;
+      }
+    });
+  }
 
   Future<void> _enrollmentSettings() => Navigator.of(context).push<void>(
     MaterialPageRoute(
@@ -188,19 +239,23 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context) => _ConnectionDialog(initial: _connection),
     );
     if (mounted && connection != null) {
-      setState(() => _connection = connection);
+      _setConnection(connection);
     }
   }
 
   Future<void> _send() async {
     final message = _draft.text.trim();
     if (_busy || _loading || message.isEmpty) return;
+    final session = _device.session;
     final connection = _connection;
-    if (connection == null) {
-      await _settings();
+    _draft.clear();
+    if (session == null || connection == null) {
+      await _record(ChatEntry('user', message));
+      await _record(const ChatEntry('assistant', Agent.disconnectedReply));
       return;
     }
     final conversation = _entries
+        .skip(_conversationStart)
         .where((entry) => entry.role == 'user' || entry.role == 'assistant')
         .where((entry) => entry.text.length <= 12000)
         .toList();
@@ -211,27 +266,27 @@ class _ChatScreenState extends State<ChatScreen> {
         <String, dynamic>{'role': entry.role, 'content': entry.text},
     ];
     setState(() => _busy = true);
-    _draft.clear();
     final client = http.Client();
     _client = client;
+    bool current() =>
+        mounted &&
+        identical(_client, client) &&
+        identical(_device.session, session);
     try {
-      final deviceClient = connection.deviceClient();
-      _mcpClient = deviceClient;
       await _record(ChatEntry('user', message));
+      if (!current()) return;
       final apiKey = await connection.resolveApiKey();
+      if (!current()) return;
       final reply =
           await Agent(
-            McpClient(deviceClient, connection.mcp, connection.token),
+            session,
             LlmClient(client, connection.llm, apiKey, connection.model),
           ).run(
             message,
             history: previous,
             onEvent: (event) {
-              if (mounted) {
-                setState(
-                  () => _activeTool = event.running ? event.label : null,
-                );
-              }
+              if (!current()) return;
+              setState(() => _activeTool = event.running ? event.label : null);
               if (event.running) return;
               unawaited(
                 _record(
@@ -244,17 +299,17 @@ class _ChatScreenState extends State<ChatScreen> {
               );
             },
           );
-      await _record(ChatEntry('assistant', reply));
+      if (current()) await _record(ChatEntry('assistant', reply));
     } on FormatException catch (error) {
-      await _record(ChatEntry('error', error.message));
+      if (current()) await _record(ChatEntry('error', error.message));
     } catch (_) {
-      await _record(const ChatEntry('error', '连接中断。请检查网络、证书和连接设置。'));
+      if (current()) {
+        await _record(const ChatEntry('error', '请求失败。请检查网络和连接设置。'));
+      }
     } finally {
       client.close();
-      _client = null;
-      _mcpClient?.close();
-      _mcpClient = null;
-      if (mounted) {
+      if (mounted && identical(_client, client)) {
+        _client = null;
         setState(() {
           _activeTool = null;
           _busy = false;
@@ -305,6 +360,16 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(
                 children: [
+                  DevicePanel(
+                    connection: _device,
+                    endpoint: _connection?.mcp,
+                    configuredName:
+                        _enrollment?.mcpUrl == _connection?.mcp &&
+                            _enrollment?.token == _connection?.token
+                        ? _enrollment?.piId
+                        : null,
+                    onConnect: _loading ? null : _connect,
+                  ),
                   if (_historyWarning)
                     const Padding(
                       padding: EdgeInsets.only(top: 8),
@@ -348,7 +413,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             minLines: 1,
                             maxLength: 12000,
                             decoration: const InputDecoration(
-                              hintText: '给树莓派下达任务…',
+                              hintText: '询问设备或网络状态…',
                               counterText: '',
                             ),
                           ),
@@ -357,7 +422,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         IconButton.filled(
                           onPressed: _busy || _loading ? null : _send,
                           icon: const Icon(Icons.arrow_upward),
-                          tooltip: '发送任务',
+                          tooltip: '发送消息',
                           style: IconButton.styleFrom(
                             minimumSize: const Size(52, 54),
                             backgroundColor: colors.primary,
@@ -383,12 +448,12 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           children: [
             Icon(
-              Icons.terminal_rounded,
+              Icons.wifi_tethering,
               size: 48,
               color: theme.colorScheme.primary,
             ),
             const SizedBox(height: 16),
-            Text('树莓派开发台', style: theme.textTheme.headlineMedium),
+            Text('设备与网络查询', style: theme.textTheme.headlineMedium),
             const SizedBox(height: 18),
             Wrap(
               alignment: WrapAlignment.center,
@@ -397,8 +462,7 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 for (final (label, prompt) in [
                   ('查看系统状态', '查看树莓派的系统信息、CPU、内存、磁盘和温度。'),
-                  ('浏览工作区', '列出 workspace 根目录中的文件和项目。'),
-                  ('运行 C++17 验收', acceptancePrompt),
+                  ('查看网络状态', '查看树莓派当前可用的网络信息。'),
                 ])
                   ActionChip(
                     label: Text(label),
@@ -484,14 +548,13 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
   late final _model = TextEditingController(
     text: widget.initial?.model ?? deepSeekDefaultModel,
   );
-  http.Client? _probeClient;
-  bool _saving = false;
+  McpClient? _probeClient;
   String? _systemInfo;
   String? _error;
 
   @override
   void dispose() {
-    _probeClient?.close();
+    unawaited(_probeClient?.close());
     for (final field in [_mcp, _token, _llm, _apiKey, _model]) {
       field.dispose();
     }
@@ -520,18 +583,21 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
       widget.initial?.mcp == endpoint ? widget.initial?.enrollmentCa : null;
 
   Future<void> _testConnection() async {
-    http.Client? client;
+    McpClient? client;
     try {
       final (endpoint, token) = _deviceSettings();
-      client = mcpHttpClient(endpoint, caPem: _enrollmentCa(endpoint));
+      client = McpClient(
+        mcpHttpClient(endpoint, caPem: _enrollmentCa(endpoint)),
+        endpoint,
+        token,
+      );
       setState(() {
         _probeClient = client;
         _systemInfo = null;
         _error = null;
       });
-      final mcp = McpClient(client, endpoint, token);
-      await mcp.initialize();
-      final info = await mcp.callTool('get_system_info', {});
+      await client.initialize();
+      final info = await client.callTool('get_system_info', {});
       final hostname = info['hostname'];
       final os = info['os'];
       final architecture = info['architecture'];
@@ -552,16 +618,12 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
     } catch (_) {
       if (mounted) setState(() => _error = '连接失败，请检查设备地址和网络。');
     } finally {
-      client?.close();
+      await client?.close();
       if (mounted && client != null) setState(() => _probeClient = null);
     }
   }
 
-  Future<void> _save() async {
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
+  void _save() {
     try {
       final (mcp, token) = _deviceSettings();
       final llm = serviceUri(_llm.text);
@@ -578,19 +640,15 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
         model,
         enrollmentCa: _enrollmentCa(mcp),
       );
-      await connection.resolveApiKey();
-      if (mounted) Navigator.pop(context, connection);
+      Navigator.pop(context, connection);
     } on FormatException catch (error) {
-      if (mounted) setState(() => _error = error.message);
-    } finally {
-      if (mounted) setState(() => _saving = false);
+      setState(() => _error = error.message);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final probing = _probeClient != null;
-    final working = probing || _saving;
     return AlertDialog(
       title: const Text('连接树莓派和云端模型'),
       content: SizedBox(
@@ -609,7 +667,7 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
               ),
               _input(_token, '设备令牌', secret: true),
               OutlinedButton.icon(
-                onPressed: working ? null : _testConnection,
+                onPressed: probing ? null : _testConnection,
                 icon: const Icon(Icons.lan_outlined),
                 label: Text(probing ? '正在查询…' : '测试树莓派连接'),
               ),
@@ -647,7 +705,7 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: working ? null : _save,
+          onPressed: probing ? null : _save,
           child: const Text('使用此连接'),
         ),
       ],
@@ -663,7 +721,7 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
     padding: const EdgeInsets.only(bottom: 10),
     child: TextField(
       controller: controller,
-      enabled: _probeClient == null && !_saving,
+      enabled: _probeClient == null,
       obscureText: secret,
       autocorrect: false,
       enableSuggestions: false,

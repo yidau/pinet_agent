@@ -1,7 +1,7 @@
 name: piagent
-description: Mobile agent for Raspberry Pi system management and development.
+description: Mobile assistant for Raspberry Pi device status and network analysis.
 publish_to: 'none'
-version: 0.3.0+3
+version: 0.4.0+4
 
 environment:
   sdk: '>=3.13.0 <4.0.0'
@@ -13,6 +13,7 @@ dependencies:
     sdk: flutter
   flutter_reactive_ble: 5.5.0
   http: ^1.6.0
+  json_schema: ^5.2.2
   material_ui: ^1.11.1
   mobile_scanner: 7.5.0
   path: ^1.9.1
