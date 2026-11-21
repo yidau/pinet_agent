@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Callable, Sequence
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import anyio
 import uvicorn
@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, ContentBlock, TextContent, Tool, ToolAnnotations
+from pydantic import Field
 from starlette.datastructures import Headers
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -22,7 +23,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from raspberry.enrollment.registry import Registry
 
 from . import device_observations
-from .capabilities import PLANNED_MUTATING_TOOLS, PLANNED_TOOLS, CapabilityStatus
+from .capabilities import NETWORK_TOOLS, PLANNED_MUTATING_TOOLS, CapabilityStatus
+from .wireless_service import WirelessError, WirelessService
 
 
 AUDIT = logging.getLogger("piagent.audit")
@@ -30,21 +32,36 @@ AUDIT.setLevel(logging.INFO)
 LOOPBACK = ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*", "[::1]", "[::1]:*"]
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
-Observation = Callable[[], dict[str, Any]]
+Observation = Callable[..., dict[str, Any]]
+StatusDetail = tuple[CapabilityStatus, str]
+NOT_IMPLEMENTED = "This capability is not implemented."
 
 
 def _observation_error_status(error: device_observations.ObservationError) -> CapabilityStatus:
     return CapabilityStatus.ERROR if error.retryable else CapabilityStatus.DEGRADED
 
 
-def _check_status(collect: Observation | None) -> CapabilityStatus:
+def _check_status(collect: Observation | None) -> StatusDetail:
     if collect is None:
-        return CapabilityStatus.UNAVAILABLE
+        return CapabilityStatus.UNAVAILABLE, NOT_IMPLEMENTED
     try:
         collect()
     except device_observations.ObservationError as error:
-        return _observation_error_status(error)
-    return CapabilityStatus.AVAILABLE
+        return _observation_error_status(error), str(error)
+    return CapabilityStatus.AVAILABLE, ""
+
+
+def _failure(
+    name: str, status: CapabilityStatus, code: str, message: str, *, retryable: bool | None = None,
+) -> CallToolResult:
+    AUDIT.info("tool=%s outcome=%s error=%s", name, status.lower(), code)
+    detail = {"status": status.lower(), "error_code": code, "message": message, "data": None}
+    if retryable is not None:
+        detail["error"] = {"type": code, "message": message, "retryable": retryable}
+    return CallToolResult(
+        isError=True, structuredContent=detail,
+        content=[TextContent(type="text", text=f"{code}: {message}")],
+    )
 
 
 class PiAgentMCP(FastMCP):
@@ -65,72 +82,64 @@ class PiAgentMCP(FastMCP):
 
 def create_app(
     workspace_path: Path, token: str, hosts: list[str],
-    device_registry: Path | None = None,
+    device_registry: Path | None = None, *, wireless_service: WirelessService | None = None,
 ) -> ASGIApp:
     registry = Registry(device_registry) if device_registry is not None else None
     if registry is None and (len(token) < 32 or not token.isascii() or any(char.isspace() for char in token)):
         raise ValueError("Set PIAGENT_TOKEN to a random ASCII token of at least 32 characters")
 
     disk_path = workspace_path.resolve()
+    wireless = wireless_service if wireless_service is not None else WirelessService()
     mcp = PiAgentMCP(
         "PocketNet", stateless_http=True, json_response=True, max_request_body_size=512 * 1024,
         streamable_http_path="/mcp",
         transport_security=TransportSecuritySettings(allowed_hosts=[*LOOPBACK, *hosts]),
     )
-    capabilities: dict[str, tuple[str, Callable[[], CapabilityStatus]]] = {}
+    capabilities: dict[str, tuple[str, Callable[[], StatusDetail]]] = {}
 
     def register(
         name: str, domain: str, description: str, collect: Observation | None = None, *,
-        status: Callable[[], CapabilityStatus] | None = None,
+        status: Callable[[], StatusDetail] | None = None,
         annotations: ToolAnnotations = READ_ONLY,
     ) -> None:
-        async def audited() -> CallToolResult:
+        async def execute(**arguments: str) -> CallToolResult:
             if collect is None:
-                message = f"{name.replace('_', ' ').capitalize()} is not implemented yet."
-                AUDIT.info("tool=%s outcome=unavailable", name)
-                return CallToolResult(
-                    isError=True,
-                    structuredContent={
-                        "status": "unavailable",
-                        "error_code": "CAPABILITY_NOT_IMPLEMENTED",
-                        "message": message,
-                        "data": None,
-                    },
-                    content=[TextContent(type="text", text=message)],
-                )
-
+                return _failure(name, CapabilityStatus.UNAVAILABLE, "CAPABILITY_UNAVAILABLE", NOT_IMPLEMENTED)
             try:
-                result = await anyio.to_thread.run_sync(collect)
+                result = await anyio.to_thread.run_sync(partial(collect, **arguments))
+            except WirelessError as error:
+                return _failure(name, error.status, error.code, str(error))
             except device_observations.ObservationError as error:
-                AUDIT.info("tool=%s outcome=failed error=%s", name, error.code)
-                retry = "Retry may succeed." if error.retryable else "Check device configuration or permissions."
-                return CallToolResult(
-                    isError=True,
-                    structuredContent={
-                        "status": _observation_error_status(error).lower(),
-                        "error_code": error.code,
-                        "message": str(error),
-                        "data": None,
-                        "error": {"type": error.code, "message": str(error), "retryable": error.retryable},
-                    },
-                    content=[TextContent(type="text", text=f"{error.code}: {error} {retry}")],
-                )
+                return _failure(name, _observation_error_status(error), error.code, str(error), retryable=error.retryable)
             AUDIT.info("tool=%s outcome=ok", name)
             return CallToolResult(
                 structuredContent=result,
                 content=[TextContent(type="text", text=json.dumps(result, ensure_ascii=False))],
             )
 
-        mcp.add_tool(audited, name=name, description=description, annotations=annotations)
+        async def without_arguments() -> CallToolResult:
+            return await execute()
+
+        async def ap_details(
+            ap_id: Annotated[str, Field(min_length=1, max_length=256, description="An id from get_access_points.")],
+        ) -> CallToolResult:
+            return await execute(ap_id=ap_id)
+
+        handler = ap_details if name == "get_ap_details" else without_arguments
+        mcp.add_tool(handler, name=name, description=description, annotations=annotations)
         capabilities[name] = domain, status or partial(_check_status, collect)
 
     def get_capability_status() -> dict[str, Any]:
-        return {
-            "capabilities": [
-                {"name": name, "status": status(), "domain": domain}
-                for name, (domain, status) in capabilities.items()
-            ],
-        }
+        # A single Kismet sample feeds all dependent tools in this response.
+        wireless_states, summary = wireless.snapshot()
+        entries = []
+        for name, (domain, probe) in capabilities.items():
+            status, reason = wireless_states[name] if name in wireless.tool_names else probe()
+            entry = {"name": name, "domain": domain, "status": status}
+            if reason:
+                entry["reason"] = reason
+            entries.append(entry)
+        return {"capabilities": entries, "kismet": summary}
 
     register(
         "get_system_info", "device",
@@ -155,13 +164,15 @@ def create_app(
     )
     register(
         "get_capability_status", "device",
-        "Report the current availability and domain of every registered MCP tool.",
-        get_capability_status, status=lambda: CapabilityStatus.AVAILABLE,
+        "Report each registered tool's current availability and the local Kismet service and capture state.",
+        get_capability_status, status=lambda: (CapabilityStatus.AVAILABLE, ""),
     )
-    for domain, tools in PLANNED_TOOLS.items():
+    for domain, tools in NETWORK_TOOLS.items():
         for name, description in tools.items():
+            implemented = name in wireless.tool_names
             register(
-                name, domain, f"{description} Planned capability, currently unavailable.",
+                name, domain, description if implemented else f"{description} Planned capability, currently unavailable.",
+                partial(wireless.call, name) if implemented else None,
                 annotations=WRITE if name in PLANNED_MUTATING_TOOLS else READ_ONLY,
             )
 

@@ -1,0 +1,22 @@
+[Unit]
+Description=PocketNet local Kismet observation service
+StartLimitIntervalSec=60
+StartLimitBurst=4
+
+[Service]
+User=piagent-kismet
+Group=piagent-kismet
+StateDirectory=piagent-kismet
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/piagent-kismet
+ExecStart=/usr/bin/kismet --no-ncurses --no-line-wrap --no-logging --homedir /var/lib/piagent-kismet --override /etc/kismet/piagent.conf
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

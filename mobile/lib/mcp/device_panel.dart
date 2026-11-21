@@ -178,13 +178,31 @@ class DevicePanel extends StatelessWidget {
                 children: [
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    child: Text(
-                      '设备能力',
-                      style: Theme.of(context).textTheme.titleLarge,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '设备能力',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                        if (session.registry.kismet != null)
+                          IconButton(
+                            tooltip: '刷新设备能力',
+                            icon: const Icon(Icons.refresh),
+                            onPressed: () async {
+                              try {
+                                await session.refreshCapabilities();
+                              } on FormatException {
+                                // The connection state reports the failure.
+                              }
+                            },
+                          ),
+                      ],
                     ),
                   ),
                   const Divider(height: 1),
-                  Expanded(child: _Capabilities(tools: session.registry.tools)),
+                  Expanded(child: _Capabilities(registry: session.registry)),
                 ],
               );
             },
@@ -197,6 +215,7 @@ class DevicePanel extends StatelessWidget {
 
 const _domains = <String, (String, IconData)>{
   'device': ('设备信息', Icons.memory_outlined),
+  'kismet': ('Kismet', Icons.sensors),
   'wireless_discovery': ('无线发现', Icons.wifi_find),
   'wireless_monitoring': ('无线监测', Icons.monitor_heart_outlined),
   'network_discovery': ('网络发现', Icons.hub_outlined),
@@ -206,12 +225,13 @@ const _domains = <String, (String, IconData)>{
 };
 
 class _Capabilities extends StatelessWidget {
-  const _Capabilities({required this.tools});
+  const _Capabilities({required this.registry});
 
-  final List<DeviceTool> tools;
+  final ToolRegistry registry;
 
   @override
   Widget build(BuildContext context) {
+    final tools = registry.tools;
     if (tools.isEmpty) {
       return const Center(child: Text('设备没有注册 MCP 工具。'));
     }
@@ -224,6 +244,34 @@ class _Capabilities extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       children: [
+        if (registry.kismet case final kismet?) ...[
+          Text('Kismet 观测引擎', style: theme.textTheme.titleMedium),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 4,
+              children: [
+                Text(switch (kismet.installed) {
+                  true => '已安装',
+                  false => '未安装',
+                  null => '安装状态未知',
+                }),
+                Text(switch (kismet.running) {
+                  true => '运行中',
+                  false => '未运行',
+                  null => '运行状态未知',
+                }),
+                Text('版本 ${kismet.version ?? '未知'}'),
+                Text('数据源 ${kismet.datasourceCount ?? '未知'}'),
+                Text('无线观测 · ${capabilityStatusLabel(kismet.wirelessStatus)}'),
+              ],
+            ),
+          ),
+          if (kismet.reason case final reason? when reason.isNotEmpty)
+            Text(reason, style: theme.textTheme.bodySmall),
+          const Divider(),
+        ],
         for (final domain in [..._domains.keys, 'other'])
           if (groups[domain] case final entries?) ...[
             Padding(
@@ -283,6 +331,8 @@ class _CapabilityRow extends StatelessWidget {
                     color: colors.onSurfaceVariant,
                   ),
                 ),
+                if (tool.reason case final reason?)
+                  Text(reason, style: theme.textTheme.bodySmall),
               ],
             ),
           ),

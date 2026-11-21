@@ -28,6 +28,7 @@ class _DashboardConnection extends Connection {
       );
 
   final List<String> calls;
+  bool sourceConnected = false;
 
   static const _domains = {
     'get_capability_status': 'device',
@@ -74,12 +75,27 @@ class _DashboardConnection extends Connection {
         switch (name) {
           case 'get_capability_status':
             data = {
+              'kismet': {
+                'installed': true,
+                'running': true,
+                'version': 'test-build',
+                'datasource_count': sourceConnected ? 1 : 0,
+                'wireless_status': sourceConnected ? 'AVAILABLE' : 'DEGRADED',
+                'reason': sourceConnected
+                    ? ''
+                    : 'No supported wireless capture source',
+              },
               'capabilities': [
                 for (final entry in _domains.entries)
                   {
                     'name': entry.key,
-                    'status': entry.value == 'device'
+                    'status':
+                        entry.value == 'device' ||
+                            (sourceConnected &&
+                                entry.key == 'get_access_points')
                         ? 'AVAILABLE'
+                        : entry.value.startsWith('wireless')
+                        ? 'DEGRADED'
                         : 'UNAVAILABLE',
                     'domain': entry.value,
                   },
@@ -91,6 +107,12 @@ class _DashboardConnection extends Connection {
               'architecture': 'aarch64',
               'os': 'Ubuntu',
               'kernel': 'test-kernel',
+            };
+          case 'get_access_points':
+            data = {
+              'access_points': [
+                {'ssid': 'Test-lab', 'rssi_dbm': -52, 'channel': '36'},
+              ],
             };
           default:
             throw StateError('Unexpected MCP tool $name');
@@ -116,15 +138,13 @@ Future<void> _phoneLayout(WidgetTester tester) async {
 
 void main() {
   testWidgets(
-    'shows reported capabilities and four real dashboard states (F4, F7–F8)',
+    'displays Kismet, degraded wireless and refreshed AP observations (F1–F3)',
     (tester) async {
       await _phoneLayout(tester);
       final calls = <String>[];
+      final connection = _DashboardConnection(calls);
       await tester.pumpWidget(
-        PiAgentApp(
-          history: _EmptyHistory(),
-          initialConnection: _DashboardConnection(calls),
-        ),
+        PiAgentApp(history: _EmptyHistory(), initialConnection: connection),
       );
       await tester.pumpAndSettle();
 
@@ -141,18 +161,35 @@ void main() {
 
       await tester.tap(find.text('设备能力（9）'));
       await tester.pumpAndSettle();
-      expect(find.text('get_access_points'), findsOneWidget);
-      expect(find.text('未实现'), findsWidgets);
+      expect(find.text('Kismet 观测引擎'), findsOneWidget);
+      expect(find.text('数据源 0'), findsOneWidget);
+      expect(find.text('运行中'), findsOneWidget);
+      expect(find.text('版本 test-build'), findsOneWidget);
+      expect(find.text('无线观测 · 条件不足'), findsOneWidget);
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
       await tester.tap(_tab('Wireless'));
       await tester.pumpAndSettle();
       expect(
-        find.text('Wireless monitoring is not available yet.'),
+        find.text(
+          'Wireless monitoring is degraded: no supported capture source is available.',
+        ),
         findsOneWidget,
       );
       expect(find.text('已连接'), findsOneWidget);
+      expect(calls, [
+        'get_capability_status',
+        'get_system_info',
+        'get_capability_status',
+      ]);
+
+      connection.sourceConnected = true;
+      await tester.tap(_tab('Wireless'));
+      await tester.pumpAndSettle();
+      expect(find.text('Test-lab'), findsOneWidget);
+      expect(find.text('-52 dBm'), findsOneWidget);
+      expect(calls.last, 'get_access_points');
 
       await tester.tap(_tab('Captures'));
       await tester.pumpAndSettle();
@@ -167,11 +204,7 @@ void main() {
       await tester.tap(_tab('Overview'));
       await tester.pumpAndSettle();
       expect(find.text('已连接'), findsOneWidget);
-      expect(calls, [
-        'get_capability_status',
-        'get_system_info',
-        'get_system_info',
-      ]);
+      expect(calls.where((name) => name == 'get_system_info'), hasLength(2));
       expect(tester.takeException(), isNull);
     },
   );

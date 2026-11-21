@@ -1,6 +1,6 @@
-# PiAgent 0.5.0 · PocketNet AI
+# PiAgent 0.6.0 · PocketNet AI
 
-PocketNet AI 是 PiAgent 的手机仪表盘。手机负责展示观测结果和发起 AI 调查，树莓派通过 MCP 提供系统、CPU、内存和磁盘状态。能力面板同时显示规划中的网络分析工具及其状态。
+PocketNet AI 是 PiAgent 的手机仪表盘。树莓派通过 MCP 提供系统状态，并通过本机 Kismet 查询版本、数据源、已记录设备和告警。手机展示每项能力的当前状态，AI 可以使用其中可用的只读工具。没有无线采集源时，手机会显示无线观测受限。
 
 首次注册时，手机扫描树莓派的永久二维码，通过蓝牙完成授权。每台手机使用独立的热点密码和 MCP 令牌。安装完成后，扫码注册、蓝牙校时和手机访问树莓派可以离线运行。使用 DeepSeek 聊天时，手机仍需能访问互联网。
 
@@ -13,7 +13,7 @@ PocketNet AI 是 PiAgent 的手机仪表盘。手机负责展示观测结果和�
 ```bash
 sudo apt update
 sudo apt install -y git python3-venv bluez rfkill hostapd dnsmasq-base openssl curl iproute2
-git clone --branch v0.5.0 https://gitee.com/zhaojiayi1101/piagent.git
+git clone --branch v0.6.0 https://gitee.com/zhaojiayi1101/piagent.git
 cd piagent
 ```
 
@@ -212,6 +212,8 @@ curl --cacert /etc/piagent-https/ca.pem -sS -o /dev/null -w '%{http_code}\n' \
 
 四个服务应显示 `active`。最后一条命令预期返回 `401`，表示 HTTPS 已启动且正在要求设备令牌。由同一个 CA 签发的服务器证书到期后，用原 CA 重新签发包含同一 IP 的服务器证书，并重启 `piagent-mcp`。
 
+在完成基础服务安装后，按 [V0.6 Kismet 安装与验收](docs/v0.6-kismet.md) 配置本机无线观测服务。已有 V0.5 设备可以直接按该文档更新。
+
 ## 4. 安装 App 并注册手机
 
 在构建电脑上准备 Flutter 3.47+、Dart 3.13+、Android SDK 和 JDK 17。Android 11+ 支持 App 调起系统的热点保存确认。以下命令构建 ARM64 手机安装包。
@@ -241,7 +243,7 @@ sudo install -m 0600 -o "$(id -u)" -g "$(id -g)" \
 1. 在顶部设备面板点「连接设备」。App 初始化 MCP 会话，调用 `tools/list` 和 `get_capability_status`，加载完成后显示「已连接」。
 2. 点「设备能力」查看所有已注册工具及状态。Agent 只使用设备确认为 `AVAILABLE` 的只读工具，调用前校验会话和参数。树莓派负责判断调用权限。
 3. Overview 显示设备与网络观测，Wireless 和 Captures 根据能力显示数据或空状态。打开 AI 后可发送「查看树莓派系统状态」。
-4. 点「断开连接」清除会话和工具列表。重新连接会刷新工具及状态。 [V0.5 能力状态与部署](docs/v0.5-capabilities.md) · [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
+4. 在设备能力面板点刷新，可重新读取 Kismet 状态。点「断开连接」清除会话和工具列表。 [V0.6 能力与状态](docs/v0.6-kismet.md) · [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
 ## 运维与验收
 
@@ -255,7 +257,7 @@ sudo journalctl -u piagent-ble-time-sync -u piagent-mcp -u piagent-hotspot -n 80
 
 用 `admin revoke DEVICE_ID` 可撤销指定手机。设备将失去热点、校时和 MCP 权限。已有 V0.3 树莓派可沿用原服务与注册信息。 [扫码、校时与授权记录](docs/v0.3-enrollment.md)
 
-本地验证覆盖 MCP 能力发现、认证、设备查询，以及 Flutter 连接、可用状态过滤、页签切换和空状态。实机验收项目见 [V0.5 能力文档](docs/v0.5-capabilities.md)。
+V0.6 已通过 Android 手机实机验收。手机正确显示 45 项 MCP 能力和 Kismet 状态，AI 查询与蓝牙校时正常。[V0.6 验收记录与复验步骤](docs/v0.6-kismet.md)
 
 ```bash
 cd mobile

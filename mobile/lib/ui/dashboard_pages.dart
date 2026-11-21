@@ -25,6 +25,10 @@ class OverviewPage extends StatelessWidget {
     final system = data.result('get_system_info');
     final network = data.result('get_network_profile');
     final events = data.records('get_wireless_events', 'events');
+    final hasKismetAlerts = data.tool('get_kismet_alerts') != null;
+    final alertsTool = hasKismetAlerts
+        ? 'get_kismet_alerts'
+        : 'get_security_events';
     return _Dashboard(
       title: '网络概览',
       children: [
@@ -63,8 +67,11 @@ class OverviewPage extends StatelessWidget {
                   child: _Metric(
                     icon: Icons.shield_outlined,
                     label: '安全告警',
-                    count: data.count('get_security_events', 'events'),
-                    state: data.state('get_security_events'),
+                    count: data.count(
+                      alertsTool,
+                      hasKismetAlerts ? 'alerts' : 'events',
+                    ),
+                    state: data.state(alertsTool),
                   ),
                 ),
               ],
@@ -136,12 +143,18 @@ class WirelessPage extends StatelessWidget {
     final channels = data.records('get_wifi_channels', 'channels');
     final events = data.records('get_wireless_events', 'events');
     final history = data.records('get_signal_history', 'history');
-    final samples = <double>[
-      for (final entry in history ?? const <Json>[])
-        if ((entry['rssi_dbm'] ?? entry['rssi']) case final num value
-            when value.isFinite)
-          value.toDouble(),
-    ];
+    final signals = <(String?, List<double>)>[];
+    for (final device in history ?? const <Json>[]) {
+      final records = device['samples'];
+      if (records is! List) continue;
+      final samples = [
+        for (final sample in records.whereType<Json>())
+          if (sample['rssi_dbm'] case final num value when value.isFinite)
+            value.toDouble(),
+      ];
+      if (samples.isNotEmpty) signals.add((_text(device['name']), samples));
+    }
+    final kismet = session?.registry.kismet;
     const tools = [
       'get_access_points',
       'get_wireless_clients',
@@ -152,7 +165,23 @@ class WirelessPage extends StatelessWidget {
     return _Dashboard(
       title: '无线环境',
       children: [
-        if (data.allUnimplemented(tools))
+        if (tools.any((name) => data.result(name)?['truncated'] == true))
+          const _QuietText('设备仅返回了部分观测记录。以下列表和信道统计基于本次返回的数据。'),
+        if (kismet?.wirelessStatus == CapabilityStatus.degraded)
+          const _Panel(
+            title: '无线观测受限',
+            icon: Icons.wifi_off_outlined,
+            child: _QuietText(
+              'Wireless monitoring is degraded: no supported capture source is available.',
+            ),
+          )
+        else if (kismet?.wirelessStatus == CapabilityStatus.error)
+          _Panel(
+            title: '无线观测出错',
+            icon: Icons.error_outline,
+            child: _QuietText(kismet?.reason ?? '设备未报告错误详情。'),
+          )
+        else if (data.allUnimplemented(tools))
           const _Panel(
             title: 'Wireless monitoring is not available yet.',
             icon: Icons.wifi_off_outlined,
@@ -161,9 +190,17 @@ class WirelessPage extends StatelessWidget {
         _Panel(
           title: '信号历史',
           icon: Icons.show_chart,
-          child: samples.isEmpty
+          child: signals.isEmpty
               ? _QuietText(data.state('get_signal_history'))
-              : _SignalHistory(samples: samples),
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final (name, samples) in signals) ...[
+                      if (name != null) Text(name),
+                      _SignalHistory(samples: samples),
+                    ],
+                  ],
+                ),
         ),
         _Panel(
           title: '接入点',
@@ -190,7 +227,14 @@ class WirelessPage extends StatelessWidget {
                     final mac = _text(record['mac']);
                     return (
                       _text(record['name']) ?? mac ?? '无线客户端',
-                      [_text(record['ap_bssid'])].nonNulls.join(' · '),
+                      [
+                        if (mac != null && mac != record['name']) mac,
+                        if (_text(record['channel']) case final channel?)
+                          '信道 $channel',
+                        if (_text(record['rssi_dbm']) case final rssi?)
+                          '$rssi dBm',
+                        ?_text(record['ap_bssid']),
+                      ].join(' · '),
                     );
                   }).toList(),
                 ),
@@ -204,9 +248,13 @@ class WirelessPage extends StatelessWidget {
                   records: channels.map((record) {
                     final channel = _text(record['channel']);
                     final frequency = _text(record['frequency_mhz']);
+                    final count = _text(record['device_count']);
                     return (
                       channel == null ? '信道' : '信道 $channel',
-                      frequency == null ? '' : '$frequency MHz',
+                      [
+                        if (count != null) '$count 台设备',
+                        if (frequency != null) '$frequency MHz',
+                      ].join(' · '),
                     );
                   }).toList(),
                 ),
@@ -350,17 +398,21 @@ class _DashboardData {
         : null;
   }
 
-  int? count(String name, String field) {
-    final value = result(name)?['count'];
-    if (value is int && value >= 0) return value;
-    return records(name, field)?.length;
+  String? count(String name, String field) {
+    final observation = result(name);
+    final value = observation?['total'] ?? observation?['count'];
+    if (value is int && value >= 0) return value.toString();
+    final length = records(name, field)?.length;
+    if (length == null) return null;
+    return observation?['truncated'] == true ? '≥ $length' : length.toString();
   }
 
   String state(String name) {
     if (session == null) return '设备未连接';
-    final status = tool(name)?.status ?? CapabilityStatus.unknown;
+    final capability = tool(name);
+    final status = capability?.status ?? CapabilityStatus.unknown;
     if (status != CapabilityStatus.available) {
-      return capabilityStatusLabel(status);
+      return [capabilityStatusLabel(status), ?capability?.reason].join(' · ');
     }
     final result = observations[name];
     if (result?['ok'] == false) {
@@ -452,7 +504,7 @@ class _Metric extends StatelessWidget {
 
   final IconData icon;
   final String label;
-  final int? count;
+  final String? count;
   final String state;
 
   @override
@@ -466,7 +518,7 @@ class _Metric extends StatelessWidget {
           Icon(icon, color: theme.colorScheme.primary, size: 20),
           const SizedBox(height: 8),
           Text(label, style: theme.textTheme.labelMedium),
-          Text(count?.toString() ?? '—', style: theme.textTheme.titleLarge),
+          Text(count ?? '—', style: theme.textTheme.titleLarge),
           if (count == null) _QuietText(state) else const SizedBox(height: 16),
         ],
       ),
@@ -572,8 +624,9 @@ class _AccessPoints extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(_text(record['ssid']) ?? '—'),
-                    if (_text(record['bssid']) case final bssid?)
+                    Text(_text(record['ssid'] ?? record['name']) ?? '—'),
+                    if (_text(record['bssid'] ?? record['mac'])
+                        case final bssid?)
                       _QuietText(bssid),
                   ],
                 ),

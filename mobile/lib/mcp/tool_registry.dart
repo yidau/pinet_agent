@@ -4,6 +4,34 @@ import '../network.dart';
 
 enum CapabilityStatus { available, unavailable, degraded, error, unknown }
 
+CapabilityStatus _status(Object? value) => switch (value) {
+  'AVAILABLE' => CapabilityStatus.available,
+  'UNAVAILABLE' => CapabilityStatus.unavailable,
+  'DEGRADED' => CapabilityStatus.degraded,
+  'ERROR' => CapabilityStatus.error,
+  _ => CapabilityStatus.unknown,
+};
+
+class KismetStatus {
+  KismetStatus.fromJson(Json data)
+    : installed = data['installed'] is bool ? data['installed'] as bool : null,
+      running = data['running'] is bool ? data['running'] as bool : null,
+      version = data['version'] is String ? data['version'] as String : null,
+      datasourceCount = switch (data['datasource_count']) {
+        final int count when count >= 0 => count,
+        _ => null,
+      },
+      wirelessStatus = _status(data['wireless_status']),
+      reason = data['reason'] is String ? data['reason'] as String : null;
+
+  final bool? installed;
+  final bool? running;
+  final String? version;
+  final int? datasourceCount;
+  final CapabilityStatus wirelessStatus;
+  final String? reason;
+}
+
 class DeviceTool {
   const DeviceTool._(
     this.name,
@@ -11,6 +39,7 @@ class DeviceTool {
     this.inputSchema,
     this.status,
     this.domain,
+    this.reason,
     this._readOnly,
     this._validator,
   );
@@ -20,6 +49,7 @@ class DeviceTool {
   final Json inputSchema;
   final CapabilityStatus status;
   final String domain;
+  final String? reason;
   final bool _readOnly;
   final JsonSchema _validator;
 
@@ -27,12 +57,13 @@ class DeviceTool {
 }
 
 class ToolRegistry {
-  ToolRegistry._(Map<String, DeviceTool> tools)
+  ToolRegistry._(Map<String, DeviceTool> tools, this.kismet)
     : _tools = Map.unmodifiable(tools);
 
   factory ToolRegistry.fromTools(
     List<Json> entries, {
     List<Json>? capabilities,
+    KismetStatus? kismet,
   }) {
     final tools = <String, DeviceTool>{};
     final reported = capabilities == null ? null : _parseStatuses(capabilities);
@@ -75,6 +106,7 @@ class ToolRegistry {
         _freeze(schema) as Json,
         capability?.status ?? CapabilityStatus.unknown,
         capability?.domain ?? 'other',
+        capability?.reason,
         annotations is Json &&
             annotations['readOnlyHint'] == true &&
             annotations['destructiveHint'] != true &&
@@ -86,33 +118,34 @@ class ToolRegistry {
     if (reported?.isNotEmpty ?? false) {
       throw const FormatException('树莓派报告了未注册工具的状态');
     }
-    return ToolRegistry._(tools);
+    return ToolRegistry._(tools, kismet);
   }
 
-  static Map<String, ({CapabilityStatus status, String domain})> _parseStatuses(
-    List<Json> entries,
-  ) {
-    final reported = <String, ({CapabilityStatus status, String domain})>{};
+  static Map<String, ({CapabilityStatus status, String domain, String? reason})>
+  _parseStatuses(List<Json> entries) {
+    final reported =
+        <String, ({CapabilityStatus status, String domain, String? reason})>{};
     for (final entry in entries) {
       final name = entry['name'];
       final domain = entry['domain'];
-      final status = switch (entry['status']) {
-        'AVAILABLE' => CapabilityStatus.available,
-        'UNAVAILABLE' => CapabilityStatus.unavailable,
-        'DEGRADED' => CapabilityStatus.degraded,
-        'ERROR' => CapabilityStatus.error,
-        _ => null,
-      };
+      final status = _status(entry['status']);
       if (name is! String ||
           !_toolName.hasMatch(name) ||
-          status == null ||
+          status == CapabilityStatus.unknown ||
           (domain != null && (domain is! String || domain.trim().isEmpty))) {
         throw const FormatException('树莓派返回了无效的工具状态');
       }
       if (reported.containsKey(name)) {
         throw FormatException('树莓派重复报告了工具状态（$name）');
       }
-      reported[name] = (status: status, domain: domain as String? ?? 'other');
+      final reason = entry['reason'];
+      reported[name] = (
+        status: status,
+        domain: domain as String? ?? 'other',
+        reason: reason is String && reason.trim().isNotEmpty
+            ? reason.trim()
+            : null,
+      );
     }
     return reported;
   }
@@ -133,6 +166,7 @@ class ToolRegistry {
   };
 
   final Map<String, DeviceTool> _tools;
+  final KismetStatus? kismet;
 
   List<DeviceTool> get tools => List.unmodifiable(_tools.values);
   List<DeviceTool> get callableTools =>

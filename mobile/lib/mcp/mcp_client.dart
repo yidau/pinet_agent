@@ -45,7 +45,7 @@ class McpClient {
     final reply = await _request('initialize', {
       'protocolVersion': _preferredVersion,
       'capabilities': <String, Object?>{},
-      'clientInfo': {'name': 'PiAgent mobile', 'version': '0.5.0'},
+      'clientInfo': {'name': 'PiAgent mobile', 'version': '0.6.0'},
     });
     final version = reply['protocolVersion'];
     if (!_supportedVersions.contains(version)) {

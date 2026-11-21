@@ -13,6 +13,7 @@ import 'llm/llm_client.dart';
 import 'mcp/device_connection.dart';
 import 'mcp/device_panel.dart';
 import 'mcp/mcp_client.dart';
+import 'mcp/tool_registry.dart';
 import 'network.dart';
 import 'storage/history.dart';
 import 'time_sync/time_sync_screen.dart';
@@ -154,6 +155,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _observations = <String, Json>{};
   final _pendingObservations = <String>{};
   DeviceSession? _observationSession;
+  ToolRegistry? _observationRegistry;
   int _selectedTab = 0;
   int _conversationStart = 0;
   Connection? _connection;
@@ -186,12 +188,19 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onDeviceChanged() {
     final session = _device.session;
     final changedSession = !identical(session, _observationSession);
+    final changedCapabilities = !identical(
+      session?.registry,
+      _observationRegistry,
+    );
     setState(() {
       if (changedSession) {
         _observationSession = session;
+        _conversationStart = _entries.length;
+      }
+      if (changedCapabilities) {
+        _observationRegistry = session?.registry;
         _observations.clear();
         _pendingObservations.clear();
-        _conversationStart = _entries.length;
       }
       if (session == null) {
         _client?.close();
@@ -200,12 +209,26 @@ class _ChatScreenState extends State<ChatScreen> {
         _busy = false;
       }
     });
-    if (changedSession && session != null) _loadObservations(session);
+    if (changedCapabilities && session != null) _loadObservations(session);
   }
 
   void _selectTab(int index) {
     setState(() => _selectedTab = index);
-    if (_device.session case final session?) _loadObservations(session);
+    if (_device.session case final session?) {
+      if (index == 1 && session.registry.kismet != null) {
+        unawaited(_refreshCapabilities(session));
+      } else {
+        _loadObservations(session);
+      }
+    }
+  }
+
+  Future<void> _refreshCapabilities(DeviceSession session) async {
+    try {
+      await session.refreshCapabilities();
+    } on FormatException {
+      // DeviceConnection reports discovery failures in the device panel.
+    }
   }
 
   void _loadObservations(DeviceSession session) {
@@ -215,7 +238,10 @@ class _ChatScreenState extends State<ChatScreen> {
         'get_network_profile',
         'get_access_points',
         'get_wireless_clients',
-        'get_security_events',
+        if (session.registry['get_kismet_alerts'] != null)
+          'get_kismet_alerts'
+        else
+          'get_security_events',
         'get_wireless_events',
       ],
       1 => [
@@ -236,18 +262,22 @@ class _ChatScreenState extends State<ChatScreen> {
           !_pendingObservations.add(name)) {
         continue;
       }
-      unawaited(_readObservation(session, name));
+      unawaited(_readObservation(session, session.registry, name));
     }
   }
 
-  Future<void> _readObservation(DeviceSession session, String name) async {
+  Future<void> _readObservation(
+    DeviceSession session,
+    ToolRegistry registry,
+    String name,
+  ) async {
     Json result;
     try {
       result = await session.callTool(name, {});
     } on FormatException catch (error) {
       result = {'ok': false, 'message': error.message};
     }
-    if (!mounted || !identical(_device.session, session)) return;
+    if (!mounted || !identical(_observationRegistry, registry)) return;
     setState(() {
       _pendingObservations.remove(name);
       _observations[name] = result;

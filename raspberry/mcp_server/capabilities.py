@@ -1,4 +1,4 @@
-"""PocketNet MCP capability domains and planned tool descriptions."""
+"""Names, domains and descriptions for the PocketNet network tool catalog."""
 
 from enum import StrEnum
 
@@ -10,9 +10,17 @@ class CapabilityStatus(StrEnum):
     ERROR = "ERROR"
 
 
-PLANNED_TOOLS = {
+NETWORK_TOOLS = {
+    "kismet": {
+        "get_kismet_status": "Read the local Kismet server's current operational status.",
+        "get_kismet_version": "Read the software version reported by the local Kismet REST API.",
+        "get_kismet_datasources": "List configured Kismet data sources and their current state.",
+        "get_kismet_devices": "Read a bounded list of device observations already recorded by Kismet.",
+        "get_kismet_alerts": "Read recent alerts already recorded by Kismet.",
+        "get_kismet_capture_status": "Report the current state of Kismet's capture sources.",
+    },
     "wireless_discovery": {
-        "scan_wireless_environment": "Request a survey of the nearby wireless environment.",
+        "scan_wireless_environment": "Summarize existing wireless environment observations.",
         "get_access_points": "List observed access points and their radio metadata.",
         "get_ap_details": "Read observations for a selected access point.",
         "get_wireless_clients": "List wirelessly observed clients.",
@@ -37,6 +45,9 @@ PLANNED_TOOLS = {
         "analyze_packet_capture": "Summarize a selected packet capture.",
         "analyze_protocol_distribution": "Summarize protocol counts in a packet capture.",
         "analyze_dns_behavior": "Summarize DNS observations in a packet capture.",
+        "list_wireless_captures": "List recorded wireless packet capture files.",
+        "get_packet_statistics": "Read statistics from a wireless packet capture.",
+        "get_protocol_distribution": "Read the observed protocol distribution from a packet capture.",
     },
     "security_analysis": {
         "get_security_events": "List recorded network security observations.",
@@ -44,6 +55,9 @@ PLANNED_TOOLS = {
         "detect_arp_anomalies": "Review ARP observations for anomalies.",
         "detect_ip_conflicts": "Review observations for conflicting IP assignments.",
         "audit_wireless_security": "Review observed wireless security properties.",
+        "get_wireless_security_events": "List recorded wireless security observations.",
+        "detect_ap_security_changes": "Identify changes in the recorded security properties of an access point.",
+        "investigate_wireless_anomaly": "Review observations related to a wireless anomaly.",
     },
     "network_diagnosis": {
         "diagnose_network": "Summarize available observations for a network diagnosis.",

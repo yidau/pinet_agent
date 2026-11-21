@@ -113,6 +113,9 @@ MockClient _deviceClient(
           'get_system_info' => {
             'structuredContent': {'hostname': 'workshop'},
           },
+          'get_kismet_status' => {
+            'structuredContent': {'running': true, 'version': 'test-build'},
+          },
           'get_network_status' => {
             'structuredContent': {'interface': 'wlan0', 'state': 'online'},
           },
@@ -143,6 +146,78 @@ MockClient _deviceClient(
 }
 
 void main() {
+  test('Agent reads Kismet and explains missing AP source using the current report (F4–F6)', () async {
+    final device = DeviceConnection();
+    addTearDown(device.dispose);
+    var sourceActive = true;
+    final calls = <String>[];
+    const missingSource = 'No supported wireless capture source';
+    await _connect(
+      device,
+      _deviceClient(
+        [_tool('get_kismet_status'), _tool('get_access_points')],
+        calls: calls,
+        onCapabilities: () async => {
+          'kismet': {
+            'running': true,
+            'datasource_count': sourceActive ? 1 : 0,
+            'wireless_status': sourceActive ? 'AVAILABLE' : 'DEGRADED',
+          },
+          'capabilities': [
+            {'name': 'get_capability_status', 'status': 'AVAILABLE'},
+            {'name': 'get_kismet_status', 'status': 'AVAILABLE'},
+            {
+              'name': 'get_access_points',
+              'status': sourceActive ? 'AVAILABLE' : 'DEGRADED',
+              if (!sourceActive) 'reason': missingSource,
+            },
+          ],
+        },
+      ),
+    );
+    sourceActive = false;
+    var rounds = 0;
+    final cloud = MockClient((request) async {
+      final body = jsonDecode(request.body) as Json;
+      expect(
+        (body['tools'] as List).map((t) => t['function']['name']),
+        unorderedEquals(['get_kismet_status', 'get_capability_status']),
+      );
+      if (rounds++ == 0) {
+        return _json(
+          _reply({
+            'tool_calls': [
+              _call('get_kismet_status', {}),
+              _call('get_capability_status', {}),
+            ],
+          }),
+        );
+      }
+      final evidence = (body['messages'] as List)
+          .where((m) => m['role'] == 'tool')
+          .map((m) => jsonDecode(m['content'] as String) as Json)
+          .toList();
+      expect(evidence.first['running'], isTrue);
+      expect(
+        (evidence.last['capabilities'] as List).last['reason'],
+        missingSource,
+      );
+      return _json(_reply({'content': 'Kismet 正在运行。缺少采集源，无法列出接入点。'}));
+    });
+    addTearDown(cloud.close);
+    final result = await Agent(
+      device.session,
+      _llm(cloud),
+    ).run('查询 Kismet 和附近的 AP', onEvent: (_) {});
+    expect(calls, [
+      'get_capability_status',
+      'get_capability_status',
+      'get_kismet_status',
+      'get_capability_status',
+    ]);
+    expect(result, contains('缺少采集源'));
+  });
+
   test('discovers all capabilities and offers only available read-only tools (F2–F5, R5)', () async {
     final device = DeviceConnection();
     addTearDown(device.dispose);

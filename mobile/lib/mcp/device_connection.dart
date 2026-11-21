@@ -56,16 +56,12 @@ class DeviceConnection extends ChangeNotifier {
 
       final entries = await client.listTools();
       if (connectionId != _connectionId) return;
-      final capabilities =
+      final registry =
           entries.any((entry) => entry['name'] == 'get_capability_status')
-          ? await _discoverCapabilities(client)
-          : null;
+          ? await _discoverRegistry(client, entries)
+          : ToolRegistry.fromTools(entries);
       if (connectionId != _connectionId) return;
-      _session = DeviceSession._(
-        this,
-        client,
-        ToolRegistry.fromTools(entries, capabilities: capabilities),
-      );
+      _session = DeviceSession._(this, client, entries, registry);
       _update(DeviceConnectionStatus.ready);
     } on McpConnectionException catch (error) {
       if (connectionId == _connectionId) _connectionFailed(error.message);
@@ -78,13 +74,23 @@ class DeviceConnection extends ChangeNotifier {
     }
   }
 
-  Future<List<Json>> _discoverCapabilities(McpClient client) async {
+  Future<ToolRegistry> _discoverRegistry(
+    McpClient client,
+    List<Json> tools,
+  ) async {
     final result = await client.callTool('get_capability_status', {});
     final entries = result['capabilities'];
     if (result['ok'] == false || entries is! List) {
       throw const FormatException('树莓派返回了无效的能力状态清单');
     }
-    return entries.map((entry) => jsonObject(entry, '工具状态')).toList();
+    final kismet = result['kismet'];
+    return ToolRegistry.fromTools(
+      tools,
+      capabilities: entries.map((entry) => jsonObject(entry, '工具状态')).toList(),
+      kismet: kismet == null
+          ? null
+          : KismetStatus.fromJson(jsonObject(kismet, 'Kismet')),
+    );
   }
 
   Future<void> disconnect() async {
@@ -129,11 +135,40 @@ class DeviceConnection extends ChangeNotifier {
 }
 
 class DeviceSession {
-  const DeviceSession._(this._connection, this._client, this.registry);
+  DeviceSession._(
+    this._connection,
+    this._client,
+    this._entries,
+    this._registry,
+  );
 
   final DeviceConnection _connection;
   final McpClient _client;
-  final ToolRegistry registry;
+  final List<Json> _entries;
+  ToolRegistry _registry;
+  Future<void>? _refresh;
+
+  ToolRegistry get registry => _registry;
+
+  Future<void> refreshCapabilities() {
+    _checkActive();
+    if (_registry.kismet == null) return Future.value();
+    return _refresh ??= _refreshCapabilities().whenComplete(
+      () => _refresh = null,
+    );
+  }
+
+  Future<void> _refreshCapabilities() async {
+    try {
+      final fresh = await _connection._discoverRegistry(_client, _entries);
+      _checkActive();
+      _registry = fresh;
+      _connection._update(DeviceConnectionStatus.ready);
+    } on FormatException catch (error) {
+      if (isActive) _connection._connectionFailed(error.message);
+      rethrow;
+    }
+  }
 
   bool get isActive =>
       identical(_connection.session, this) &&
