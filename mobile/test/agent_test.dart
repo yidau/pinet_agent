@@ -146,6 +146,62 @@ MockClient _deviceClient(
 }
 
 void main() {
+  test(
+    'C8: model sees available read tools and cannot start scans or replay',
+    () async {
+      final device = DeviceConnection();
+      addTearDown(device.dispose);
+      final calls = <String>[];
+      final mutating = [
+        'start_wireless_monitoring',
+        'replay_capture',
+        'stop_capture_replay',
+      ];
+      await _connect(
+        device,
+        _deviceClient(
+          [
+            _tool('get_capture_status'),
+            _tool('get_access_points'),
+            _tool('get_bluetooth_devices'),
+            for (final name in mutating)
+              {
+                ..._tool(name),
+                'annotations': {'readOnlyHint': false},
+              },
+          ],
+          statuses: const {
+            'get_access_points': 'DEGRADED',
+            'get_bluetooth_devices': 'UNAVAILABLE',
+          },
+          calls: calls,
+        ),
+      );
+      final cloud = MockClient((request) async {
+        final body = jsonDecode(request.body) as Json;
+        final available = [
+          for (final tool in body['tools']) tool['function']['name'],
+        ];
+        expect(available.toSet(), {
+          'get_capture_status',
+          'get_capability_status',
+        });
+        return _json(_reply({'content': '当前可以查询重放状态。'}));
+      });
+      addTearDown(cloud.close);
+      final session = device.session!;
+      await Agent(session, _llm(cloud)).run('现在能做什么？', onEvent: (_) {});
+      for (final name in [
+        ...mutating,
+        'get_access_points',
+        'get_bluetooth_devices',
+      ]) {
+        await expectLater(session.callTool(name, {}), throwsFormatException);
+      }
+      expect(calls, ['get_capability_status']);
+    },
+  );
+
   test('Agent reads Kismet and explains missing AP source using the current report (F4–F6)', () async {
     final device = DeviceConnection();
     addTearDown(device.dispose);

@@ -18,7 +18,7 @@ class _EmptyHistory extends History {
 }
 
 class _DashboardConnection extends Connection {
-  _DashboardConnection(this.calls)
+  _DashboardConnection(this.calls, {this.v07 = false})
     : super(
         Uri.parse('https://pi.example/mcp'),
         'device-token',
@@ -28,9 +28,10 @@ class _DashboardConnection extends Connection {
       );
 
   final List<String> calls;
+  final bool v07;
   bool sourceConnected = false;
 
-  static const _domains = {
+  Map<String, String> get _domains => {
     'get_capability_status': 'device',
     'get_system_info': 'device',
     'get_access_points': 'wireless_discovery',
@@ -40,6 +41,8 @@ class _DashboardConnection extends Connection {
     'get_wireless_events': 'wireless_monitoring',
     'list_captures': 'packet_analysis',
     'get_capture_metadata': 'packet_analysis',
+    if (v07) 'get_bluetooth_devices': 'bluetooth',
+    if (v07) 'get_capture_status': 'packet_analysis',
   };
 
   @override
@@ -51,7 +54,7 @@ class _DashboardConnection extends Connection {
       case 'initialize':
         result = {
           'protocolVersion': '2025-11-25',
-          'serverInfo': {'name': 'Field Pi', 'version': '0.5'},
+          'serverInfo': {'name': 'Field Pi', 'version': v07 ? '0.7' : '0.6'},
         };
       case 'notifications/initialized':
         return http.Response('', 202);
@@ -84,6 +87,24 @@ class _DashboardConnection extends Connection {
                 'reason': sourceConnected
                     ? ''
                     : 'No supported wireless capture source',
+                if (v07)
+                  'source_states': {
+                    'managed_scan': {
+                      'status': sourceConnected ? 'AVAILABLE' : 'DEGRADED',
+                      'reason': sourceConnected ? '' : 'Managed scan inactive',
+                    },
+                    'monitor_mode': {
+                      'status': 'DEGRADED',
+                      'reason': 'No monitor source',
+                    },
+                    'bluetooth_scan': {
+                      'status': sourceConnected ? 'AVAILABLE' : 'UNAVAILABLE',
+                      'reason': sourceConnected
+                          ? ''
+                          : 'Bluetooth helper missing',
+                    },
+                    'pcap_replay': {'status': 'AVAILABLE', 'reason': ''},
+                  },
               },
               'capabilities': [
                 for (final entry in _domains.entries)
@@ -91,6 +112,10 @@ class _DashboardConnection extends Connection {
                     'name': entry.key,
                     'status':
                         entry.value == 'device' ||
+                            (v07 && entry.value == 'packet_analysis') ||
+                            (v07 &&
+                                sourceConnected &&
+                                entry.key == 'get_bluetooth_devices') ||
                             (sourceConnected &&
                                 entry.key == 'get_access_points')
                         ? 'AVAILABLE'
@@ -111,8 +136,51 @@ class _DashboardConnection extends Connection {
           case 'get_access_points':
             data = {
               'access_points': [
-                {'ssid': 'Test-lab', 'rssi_dbm': -52, 'channel': '36'},
+                {
+                  'ssid': 'Test-lab',
+                  'rssi_dbm': -52,
+                  'channel': '36',
+                  if (v07) 'observation_source': 'managed_scan',
+                  if (v07) 'kismet_reported': false,
+                },
               ],
+            };
+          case 'get_bluetooth_devices':
+            data = {
+              'devices': [
+                {
+                  'name': 'Lab beacon',
+                  'address': '02:00:00:00:00:01',
+                  'rssi_dbm': -61,
+                  'observation_source': 'bluetooth_scan',
+                },
+              ],
+            };
+          case 'list_captures':
+            data = {
+              'captures': [
+                {
+                  'id': 'sample.pcapng',
+                  'filename': 'sample.pcapng',
+                  'size_bytes': 2048,
+                  'format': 'pcapng',
+                  'modified_at': '2026-11-21T13:00:00Z',
+                },
+              ],
+            };
+          case 'get_capture_status':
+            data = {
+              'state': 'running',
+              'filename': 'sample.pcapng',
+              'datasource': 'lab-replay',
+            };
+          case 'get_capture_metadata':
+            expect(params['arguments'], {'capture_id': 'sample.pcapng'});
+            data = {
+              'filename': 'sample.pcapng',
+              'size_bytes': 2048,
+              'format': 'pcapng',
+              'modified_at': '2026-11-21T13:00:00Z',
             };
           default:
             throw StateError('Unexpected MCP tool $name');
@@ -137,6 +205,56 @@ Future<void> _phoneLayout(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets(
+    'C7: shows distinct radio sources, metadata and replay state from mock MCP',
+    (tester) async {
+      await _phoneLayout(tester);
+      final calls = <String>[];
+      final connection = _DashboardConnection(calls, v07: true);
+      await tester.pumpWidget(
+        PiAgentApp(history: _EmptyHistory(), initialConnection: connection),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('连接设备'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('设备能力（11）'));
+      await tester.pumpAndSettle();
+      for (final label in [
+        'Wi-Fi Managed Scan · 条件不足',
+        'Wi-Fi Monitor Mode · 条件不足',
+        'Bluetooth Active Scan · 未实现',
+        'PCAP Replay · 可用',
+        'No monitor source',
+      ]) {
+        expect(find.text(label), findsOneWidget);
+      }
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      connection.sourceConnected = true;
+      await tester.tap(_tab('Wireless'));
+      await tester.pumpAndSettle();
+      expect(find.text('Wi-Fi Networks'), findsOneWidget);
+      expect(find.text('Managed Scan'), findsOneWidget);
+      expect(find.text('扫描报告未写入 Kismet'), findsOneWidget);
+      expect(find.text('未知'), findsOneWidget);
+      expect(find.text('Test-lab'), findsOneWidget);
+      expect(find.text('Bluetooth Devices'), findsOneWidget);
+      expect(find.text('Lab beacon'), findsOneWidget);
+      expect(find.textContaining('Active Scan ·'), findsOneWidget);
+      await tester.tap(_tab('Captures'));
+      await tester.pumpAndSettle();
+      expect(find.text('lab-replay'), findsOneWidget);
+      expect(find.text('running'), findsOneWidget);
+      expect(find.textContaining('pcapng · 2.0 KiB'), findsOneWidget);
+      await tester.tap(find.widgetWithText(ListTile, 'sample.pcapng'));
+      await tester.pumpAndSettle();
+      expect(find.text('文件元信息'), findsOneWidget);
+      expect(find.text('2.0 KiB'), findsOneWidget);
+      expect(calls.last, 'get_capture_metadata');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'displays Kismet, degraded wireless and refreshed AP observations (F1–F3)',
     (tester) async {

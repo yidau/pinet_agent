@@ -215,7 +215,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _selectTab(int index) {
     setState(() => _selectedTab = index);
     if (_device.session case final session?) {
-      if (index == 1 && session.registry.kismet != null) {
+      if ((index == 1 || index == 2) && session.registry.kismet != null) {
         unawaited(_refreshCapabilities(session));
       } else {
         _loadObservations(session);
@@ -246,12 +246,13 @@ class _ChatScreenState extends State<ChatScreen> {
       ],
       1 => [
         'get_access_points',
+        'get_bluetooth_devices',
         'get_wireless_clients',
         'get_wifi_channels',
         'get_signal_history',
         'get_wireless_events',
       ],
-      2 => ['list_captures'],
+      2 => ['list_captures', 'get_capture_status'],
       _ => <String>[],
     };
     for (final name in names) {

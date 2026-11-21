@@ -7,6 +7,7 @@ import math
 import os
 import re
 from urllib.parse import urlencode, urlsplit
+from uuid import UUID
 
 
 PAGE_SIZE = 32
@@ -83,7 +84,12 @@ class KismetAdapter:
         self._url = base_url if base_url is not None else os.environ.get("PIAGENT_KISMET_URL", "")
         self._key = api_key if api_key is not None else os.environ.get("PIAGENT_KISMET_API_KEY", "")
 
-    def _request(self, path: str, form: dict | None = None):
+    def _headers(self):
+        if not re.fullmatch(r"[A-Za-z0-9._~+/=-]+", self._key):
+            raise KismetError("KISMET_CONFIGURATION", "The local Kismet API key is missing or invalid.")
+        return {"Cookie": "KISMET=" + self._key, "Accept": "application/json"}
+
+    def _request(self, path: str, form: dict | None = None, *, text_reply=False, timeout=1.5):
         # http.client neither follows redirects nor uses system proxy settings.
         try:
             url = urlsplit(self._url)
@@ -95,15 +101,13 @@ class KismetAdapter:
                 raise ValueError()
         except ValueError:
             raise KismetError("KISMET_CONFIGURATION", "Set a loopback Kismet URL with its configured port.") from None
-        if not re.fullmatch(r"[A-Za-z0-9._~+/=-]+", self._key):
-            raise KismetError("KISMET_CONFIGURATION", "The local read-only Kismet API key is missing or invalid.")
-        headers = {"Cookie": "KISMET=" + self._key, "Accept": "application/json"}
+        headers = self._headers()
         body = None
         if form is not None:
             body = urlencode(form)
             headers["Content-Type"] = "application/x-www-form-urlencoded"
         connection_cls = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
-        connection = connection_cls(host, port, timeout=1.5)
+        connection = connection_cls(host, port, timeout=timeout)
         try:
             connection.request("GET" if form is None else "POST", path, body, headers)
             response = connection.getresponse()
@@ -114,7 +118,7 @@ class KismetAdapter:
             data = response.read(MAX_RESPONSE_BYTES + 1)
             if len(data) > MAX_RESPONSE_BYTES:
                 raise KismetError("KISMET_RESPONSE_LIMIT", "The Kismet response exceeded the size limit.")
-            return json.loads(data)
+            return data.decode() if text_reply else json.loads(data)
         except (TimeoutError, http.client.HTTPException, OSError):
             raise KismetError("KISMET_CONNECTION", "The local Kismet API could not be reached.") from None
         except (ValueError, UnicodeError, RecursionError):
@@ -128,28 +132,61 @@ class KismetAdapter:
             raise malformed()
         return {"installed": True, "running": True, "version": string_field(row, "kismet.system.version")}
 
+    def submit_scan_report(self, source_uuid, source_name, reports):
+        """Use only the reporter's scanreport-role credentials for this fixed endpoint."""
+        payload = {"source_uuid": source_uuid, "source_name": source_name, "reports": reports}
+        reply = self._request("/phy/phy80211/scan/scan_report.cmd", {"json": json.dumps(payload)})
+        if not isinstance(reply, dict) or reply.get("success") is not True:
+            raise KismetError("KISMET_REPORT_REJECTED", "Kismet did not acknowledge the scan report.")
+
     def get_datasources(self):
         rows = records(self._request("/datasource/all_sources.json"))
         sources = []
         for row in rows:
             driver = row.get("kismet.datasource.type_driver")
-            if not isinstance(driver, dict):
+            hardware = optional_text(row, "kismet.datasource.hardware")
+            virtual = hardware == "IEEE80211 scan"
+            if isinstance(driver, dict) and driver.get("kismet.datasource.driver.type"):
+                driver_type = string_field(driver, "kismet.datasource.driver.type")
+            elif virtual:
+                driver_type = "virtual"
+            else:
                 raise malformed()
             sources.append({
                 "name": string_field(row, "kismet.datasource.name"),
                 "uuid": string_field(row, "kismet.datasource.uuid"),
-                "driver": string_field(driver, "kismet.datasource.driver.type"),
+                "driver": driver_type, "hardware": hardware,
                 "interface": optional_text(row, "kismet.datasource.interface"),
-                "running": flag(row, "kismet.datasource.running"),
-                "paused": flag(row, "kismet.datasource.paused"),
-                "error": flag(row, "kismet.datasource.error"),
+                **{key: (None if virtual and "kismet.datasource." + key not in row
+                         else flag(row, "kismet.datasource." + key))
+                   for key in ("running", "paused", "error")},
             })
         return sources
 
     def get_devices(self, *, wireless=False):
         view = "phy-IEEE802.11" if wireless else "all"
+        return self._view_devices(view, wireless=wireless)
+
+    def get_source_devices(self, source_uuid: str, *, phy: str | None = None):
+        if phy not in (None, "IEEE802.11", "Bluetooth"):
+            raise ValueError("Unknown device PHY")
+        try:
+            ident = str(UUID(source_uuid))
+        except (ValueError, AttributeError, TypeError):
+            raise malformed() from None
+        return self._view_devices("seenby-" + ident.upper(), wireless=phy == "IEEE802.11", phy=phy, source_uuid=ident)
+
+    def _view_devices(self, view, *, wireless=False, phy=None, source_uuid=None):
+        fields = list(DEVICE_FIELDS)
+        options = {"fields": fields, "datatable": True}
+        if phy:
+            options["regex"] = [["kismet.device.base.phyname", "^" + re.escape(phy) + "$"]]
+        if source_uuid:
+            fields.append("kismet.device.base.seenby")
+        if phy == "Bluetooth":
+            fields.append(["bluetooth.device/bluetooth.device.service_uuid_strs", "service_uuids"])
         result = self._request(f"/devices/views/{view}/devices.json", {
-            "json": json.dumps({"fields": DEVICE_FIELDS, "datatable": True}),
+            "json": json.dumps(options),
             "start": 0, "length": PAGE_SIZE, "draw": 1,
         })
         if not isinstance(result, dict):
@@ -160,7 +197,19 @@ class KismetAdapter:
             raise malformed()
         devices = []
         for row in rows:
+            if phy and row.get("kismet.device.base.phyname") != phy:
+                raise malformed()
             signal = row.get("kismet.device.base.signal", {})
+            single_source = True
+            if source_uuid:
+                seen = row.get("kismet.device.base.seenby")
+                seen = list(seen.values()) if isinstance(seen, dict) else seen
+                seen = seen if isinstance(seen, list) else []
+                own = next((s for s in seen if isinstance(s, dict) and
+                            str(s.get("kismet.common.seenby.uuid", "")).lower() == source_uuid), None)
+                single_source = len(seen) == 1 and own is not None
+                if not single_source:
+                    signal = (own or {}).get("kismet.common.seenby.signal", {})
             if not isinstance(signal, dict):
                 raise malformed()
             last = signal.get("kismet.common.signal.last_signal")
@@ -170,13 +219,17 @@ class KismetAdapter:
             devices.append({
                 "id": string_field(row, "kismet.device.base.key"),
                 "mac": string_field(row, "kismet.device.base.macaddr"),
-                "type": string_field(row, "kismet.device.base.type"),
+                "type": string_field(row, "kismet.device.base.type") if single_source else None,
                 "phy": string_field(row, "kismet.device.base.phyname"),
-                "name": optional_text(row, "kismet.device.base.name"),
-                "channel": optional_text(row, "kismet.device.base.channel"),
+                "name": optional_text(row, "kismet.device.base.name") if single_source else None,
+                "channel": optional_text(row, "kismet.device.base.channel") if single_source else None,
                 "rssi_dbm": last if dbm and last is not None and last < 0 else None,
                 "samples": signal_history(signal) if wireless else [],
             })
+            if phy == "Bluetooth" and single_source:
+                uuids = row.get("service_uuids")
+                if isinstance(uuids, list):
+                    devices[-1]["service_uuids"] = [v[:64] for v in uuids[:32] if isinstance(v, str)]
         return devices, total
 
     def get_alerts(self):

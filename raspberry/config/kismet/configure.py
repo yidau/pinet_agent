@@ -12,6 +12,7 @@ import secrets
 import subprocess
 import tempfile
 import time
+import uuid
 
 
 HERE = Path(__file__).resolve().parent
@@ -53,15 +54,42 @@ def api(port, path, headers, data=None):
         connection.close()
 
 
-def setup(port):
+def create_key(port, headers, role):
+    payload = json.dumps({"name": "PocketNet-" + role + "-" + secrets.token_hex(6),
+                          "role": role, "duration": 0})
+    status, body = api(port, "/auth/apikey/generate.cmd", headers, payload)
+    if status != 200 or not re.fullmatch(rb"[a-zA-Z0-9._~+/=-]+", body.strip()):
+        raise SystemExit(f"Could not provision Kismet role {role} (HTTP {status}).")
+    return body.strip().decode("ascii")
+
+
+def configure_scan(port, headers, interface):
+    scan_env = ENV.parent / "managed-scan.env"
+    previous = read_fields(scan_env) if scan_env.exists() else {}
+    source_uuid = previous.get("PIAGENT_SCAN_UUID") or str(uuid.uuid4())
+    key = previous.get("PIAGENT_SCAN_KEY") or create_key(port, headers, "scanreport")
+    write_private(scan_env, f"PIAGENT_SCAN_INTERFACE={interface}\nPIAGENT_SCAN_UUID={source_uuid}\n"
+                  f"PIAGENT_SCAN_URL=http://127.0.0.1:{port}\nPIAGENT_SCAN_KEY={key}\n")
+    modules = Path("/usr/lib/piagent-managed-scan/raspberry/mcp_server")
+    run("install", "-d", "-m", "0755", modules)
+    for filename in ("__init__.py", "kismet_adapter.py", "managed_scan.py"):
+        run("install", "-m", "0644", HERE.parents[1] / "mcp_server" / filename, modules / filename)
+    unit = "piagent-managed-scan@.service"
+    run("install", "-m", "0644", HERE / unit, Path("/etc/systemd/system") / unit)
+
+
+def setup(port, scan_interface):
     if not Path("/usr/bin/kismet").is_file():
         raise SystemExit("Install kismet-core first.")
     if not 1024 <= port <= 65535:
         raise SystemExit("Choose an unprivileged HTTP port between 1024 and 65535.")
+    if not re.fullmatch(r"[a-zA-Z0-9_.-]{1,15}", scan_interface):
+        raise SystemExit("Choose a valid Linux Wi-Fi interface name.")
     if not Path("/etc/systemd/system/piagent-mcp.service").is_file():
         raise SystemExit("Install the PiAgent MCP unit first.")
     subprocess.run(["systemd-sysusers", "-"], text=True, check=True,
-                   input="u piagent-kismet - \"PocketNet Kismet\" /var/lib/piagent-kismet\n")
+                   input="u piagent-kismet - \"PocketNet Kismet\" /var/lib/piagent-kismet\n"
+                         "u piagent-scan - \"PocketNet Wi-Fi reporter\" /nonexistent\n")
     owner = pwd.getpwnam("piagent-kismet")
     auth = STATE / ".kismet" / "kismet_httpd.conf"
     for directory in (STATE, auth.parent):
@@ -93,18 +121,15 @@ def setup(port):
 
     key = read_fields(ENV).get("PIAGENT_KISMET_API_KEY", "") if ENV.exists() else ""
     if not key or api(port, "/datasource/all_sources.json", {"Cookie": "KISMET=" + key})[0] != 200:
-        payload = json.dumps({"name": "PocketNet-" + secrets.token_hex(6), "role": "readonly", "duration": 0})
-        status, body = api(port, "/auth/apikey/generate.cmd", headers, payload)
-        if status != 200 or not re.fullmatch(rb"[a-zA-Z0-9._~+/=-]+", body.strip()):
-            raise SystemExit(f"Could not provision the Kismet readonly role (HTTP {status}).")
-        key = body.strip().decode("ascii")
+        key = create_key(port, headers, "readonly")
         if api(port, "/datasource/all_sources.json", {"Cookie": "KISMET=" + key})[0] != 200:
             raise SystemExit("The new readonly credential failed verification.")
     write_private(ENV, f"PIAGENT_KISMET_URL=http://127.0.0.1:{port}\nPIAGENT_KISMET_API_KEY={key}\n")
+    configure_scan(port, headers, scan_interface)
     run("install", "-D", "-m", "0644", HERE / "mcp-kismet.conf",
         "/etc/systemd/system/piagent-mcp.service.d/kismet.conf")
     run("systemctl", "daemon-reload")
-    print(f"Kismet ready on loopback port {port}. Restart piagent-mcp after installing its V0.6 modules.")
+    print(f"Kismet ready on loopback port {port}. Restart piagent-mcp after installing its V0.7 modules.")
 
 
 if __name__ == "__main__":
@@ -112,6 +137,7 @@ if __name__ == "__main__":
         raise SystemExit("Run provisioning with sudo.")
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, help="Local Kismet port (defaults to the installed package configuration).")
+    parser.add_argument("--scan-interface", default="wlan0", help="Wi-Fi interface for manual scans.")
     args = parser.parse_args()
     port = args.port if args.port is not None else int(read_fields(Path("/etc/kismet/kismet_httpd.conf"))["httpd_port"])
-    setup(port)
+    setup(port, args.scan_interface)

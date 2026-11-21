@@ -139,6 +139,7 @@ class WirelessPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final data = _DashboardData(session, observations);
     final accessPoints = data.records('get_access_points', 'access_points');
+    final bluetooth = data.records('get_bluetooth_devices', 'devices');
     final clients = data.records('get_wireless_clients', 'clients');
     final channels = data.records('get_wifi_channels', 'channels');
     final events = data.records('get_wireless_events', 'events');
@@ -155,8 +156,9 @@ class WirelessPage extends StatelessWidget {
       if (samples.isNotEmpty) signals.add((_text(device['name']), samples));
     }
     final kismet = session?.registry.kismet;
-    const tools = [
+    final tools = [
       'get_access_points',
+      if (data.tool('get_bluetooth_devices') != null) 'get_bluetooth_devices',
       'get_wireless_clients',
       'get_wifi_channels',
       'get_signal_history',
@@ -167,7 +169,8 @@ class WirelessPage extends StatelessWidget {
       children: [
         if (tools.any((name) => data.result(name)?['truncated'] == true))
           const _QuietText('设备仅返回了部分观测记录。以下列表和信道统计基于本次返回的数据。'),
-        if (kismet?.wirelessStatus == CapabilityStatus.degraded)
+        if (kismet?.sources.isEmpty == true &&
+            kismet?.wirelessStatus == CapabilityStatus.degraded)
           const _Panel(
             title: '无线观测受限',
             icon: Icons.wifi_off_outlined,
@@ -175,7 +178,8 @@ class WirelessPage extends StatelessWidget {
               'Wireless monitoring is degraded: no supported capture source is available.',
             ),
           )
-        else if (kismet?.wirelessStatus == CapabilityStatus.error)
+        else if (kismet?.sources.isEmpty == true &&
+            kismet?.wirelessStatus == CapabilityStatus.error)
           _Panel(
             title: '无线观测出错',
             icon: Icons.error_outline,
@@ -187,6 +191,45 @@ class WirelessPage extends StatelessWidget {
             icon: Icons.wifi_off_outlined,
             child: _QuietText('接入 Kismet 后可查看接入点、信号历史和无线活动。'),
           ),
+        _Panel(
+          title: 'Wi-Fi Networks',
+          icon: Icons.router_outlined,
+          child: accessPoints == null || accessPoints.isEmpty
+              ? _QuietText(
+                  accessPoints?.isEmpty == true
+                      ? '没有观察到接入点'
+                      : data.state('get_access_points'),
+                )
+              : _AccessPoints(records: accessPoints),
+        ),
+        _Panel(
+          title: 'Bluetooth Devices',
+          icon: Icons.bluetooth_outlined,
+          child: bluetooth == null || bluetooth.isEmpty
+              ? _QuietText(
+                  bluetooth?.isEmpty == true
+                      ? '此次主动扫描尚未记录到蓝牙设备'
+                      : data.state('get_bluetooth_devices'),
+                )
+              : _RecordList(
+                  records: [
+                    for (final row in bluetooth)
+                      (
+                        _text(row['name']) ??
+                            _text(row['address'] ?? row['mac']) ??
+                            '蓝牙设备',
+                        [
+                          ?_sourceLabel(row['observation_source']),
+                          ?_text(row['address'] ?? row['mac']),
+                          ?_text(row['type']),
+                          if (_text(row['rssi_dbm']) case final rssi?)
+                            '$rssi dBm',
+                          ?_observationTime(row['observed_at']),
+                        ].join(' · '),
+                      ),
+                  ],
+                ),
+        ),
         _Panel(
           title: '信号历史',
           icon: Icons.show_chart,
@@ -201,17 +244,6 @@ class WirelessPage extends StatelessWidget {
                     ],
                   ],
                 ),
-        ),
-        _Panel(
-          title: '接入点',
-          icon: Icons.router_outlined,
-          child: accessPoints == null || accessPoints.isEmpty
-              ? _QuietText(
-                  accessPoints?.isEmpty == true
-                      ? '没有观察到接入点'
-                      : data.state('get_access_points'),
-                )
-              : _AccessPoints(records: accessPoints),
         ),
         _Panel(
           title: '无线客户端',
@@ -290,6 +322,7 @@ class CapturesPage extends StatelessWidget {
     final data = _DashboardData(session, observations);
     final tasks = data.records('list_captures', 'tasks');
     final captures = data.records('list_captures', 'captures');
+    final replay = data.result('get_capture_status');
     final protocols = data.records(
       'analyze_protocol_distribution',
       'protocols',
@@ -305,45 +338,82 @@ class CapturesPage extends StatelessWidget {
             icon: Icons.layers_clear_outlined,
             child: _QuietText('采集服务接入后可在这里查看 PCAP 文件与分析结果。'),
           ),
+        if (data.tool('get_capture_status') != null)
+          _Panel(
+            title: '文件重放',
+            icon: Icons.replay_outlined,
+            child: _Details(
+              values: [
+                ('状态', _text(replay?['state'])),
+                ('文件', _text(replay?['filename'])),
+                ('数据源', _text(replay?['datasource'])),
+                ('说明', _text(replay?['reason'])),
+              ],
+              empty: data.state('get_capture_status'),
+            ),
+          )
+        else
+          _Panel(
+            title: '抓包任务',
+            icon: Icons.pending_actions_outlined,
+            child: tasks == null || tasks.isEmpty
+                ? _QuietText(
+                    tasks?.isEmpty == true
+                        ? '没有抓包任务'
+                        : data.state('list_captures'),
+                  )
+                : _RecordList(
+                    records: tasks.map((task) {
+                      return (
+                        _text(task['name']) ?? _text(task['id']) ?? '抓包任务',
+                        _text(task['status']) ?? '',
+                      );
+                    }).toList(),
+                  ),
+          ),
         _Panel(
-          title: '抓包任务',
-          icon: Icons.pending_actions_outlined,
-          child: tasks == null || tasks.isEmpty
-              ? _QuietText(
-                  tasks?.isEmpty == true
-                      ? '没有抓包任务'
-                      : data.state('list_captures'),
-                )
-              : _RecordList(
-                  records: tasks.map((task) {
-                    return (
-                      _text(task['name']) ?? _text(task['id']) ?? '抓包任务',
-                      _text(task['status']) ?? '',
-                    );
-                  }).toList(),
-                ),
-        ),
-        _Panel(
-          title: 'PCAP 文件',
+          title: '离线文件',
           icon: Icons.folder_open_outlined,
           child: captures == null || captures.isEmpty
               ? _QuietText(
                   captures?.isEmpty == true
-                      ? '没有 PCAP 文件'
+                      ? '离线目录中没有实验文件'
                       : data.state('list_captures'),
                 )
-              : _RecordList(
-                  records: captures.map((capture) {
-                    return (
-                      _text(capture['filename']) ??
-                          _text(capture['name']) ??
-                          'PCAP 文件',
-                      [
-                        _bytes(capture['size_bytes']),
-                        _text(capture['captured_at']),
-                      ].nonNulls.join(' · '),
-                    );
-                  }).toList(),
+              : Material(
+                  type: MaterialType.transparency,
+                  child: Column(
+                    children: [
+                      for (final file in captures)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            _text(file['filename'] ?? file['name']) ?? '实验文件',
+                          ),
+                          subtitle: Text(
+                            [
+                              ?_text(file['format']),
+                              ?_bytes(file['size_bytes']),
+                              ?_text(
+                                file['modified_at'] ?? file['captured_at'],
+                              ),
+                            ].join(' · '),
+                          ),
+                          onTap:
+                              file['id'] is String &&
+                                  data
+                                          .tool('get_capture_metadata')
+                                          ?.isCallable ==
+                                      true
+                              ? () => _openMetadata(
+                                  context,
+                                  session!,
+                                  file['id'] as String,
+                                )
+                              : null,
+                        ),
+                    ],
+                  ),
                 ),
         ),
         _Panel(
@@ -369,6 +439,53 @@ class CapturesPage extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _openMetadata(
+    BuildContext context,
+    DeviceSession session,
+    String id,
+  ) {
+    final query = session
+        .callTool('get_capture_metadata', {'capture_id': id})
+        .onError<FormatException>(
+          (error, _) => {'ok': false, 'message': error.message},
+        );
+    return showDialog<void>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('文件元信息'),
+        content: FutureBuilder<Json>(
+          future: query,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const LinearProgressIndicator();
+            }
+            if (!session.isActive) return const Text('设备已断开');
+            final file = snapshot.data;
+            if (file == null || file['ok'] == false) {
+              return Text(_text(file?['message']) ?? '无法读取文件元信息');
+            }
+            return _Details(
+              values: [
+                ('文件', _text(file['filename'])),
+                ('格式', _text(file['format'])),
+                ('大小', _bytes(file['size_bytes'])),
+                ('修改时间', _text(file['modified_at'])),
+                ('说明', _text(file['reason'])),
+              ],
+              empty: '设备未报告文件元信息',
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -611,9 +728,12 @@ class _AccessPoints extends StatelessWidget {
       columnSpacing: 16,
       columns: const [
         DataColumn(label: Text('SSID / BSSID')),
+        DataColumn(label: Text('观测来源')),
         DataColumn(label: Text('信道')),
         DataColumn(label: Text('RSSI')),
         DataColumn(label: Text('认证')),
+        DataColumn(label: Text('频率')),
+        DataColumn(label: Text('观测时间')),
       ],
       rows: [
         for (final record in records)
@@ -624,10 +744,25 @@ class _AccessPoints extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(_text(record['ssid'] ?? record['name']) ?? '—'),
+                    Text(
+                      record['ssid'] == ''
+                          ? '隐藏 SSID'
+                          : _text(record['ssid'] ?? record['name']) ?? '—',
+                    ),
                     if (_text(record['bssid'] ?? record['mac'])
                         case final bssid?)
                       _QuietText(bssid),
+                  ],
+                ),
+              ),
+              DataCell(
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_observationSources(record)),
+                    if (record['kismet_reported'] == false)
+                      const _QuietText('扫描报告未写入 Kismet'),
                   ],
                 ),
               ),
@@ -638,7 +773,14 @@ class _AccessPoints extends StatelessWidget {
                   null => '—',
                 }),
               ),
-              DataCell(Text(_text(record['security']) ?? '—')),
+              DataCell(Text(_text(record['security']) ?? '未知')),
+              DataCell(
+                Text(switch (_text(record['frequency_mhz'])) {
+                  final String mhz => '$mhz MHz',
+                  null => '—',
+                }),
+              ),
+              DataCell(Text(_observationTime(record['observed_at']) ?? '—')),
             ],
           ),
       ],
@@ -721,6 +863,33 @@ String? _text(Object? value) => switch (value) {
   final num number when number.isFinite => number.toString(),
   _ => null,
 };
+
+String? _sourceLabel(Object? value) => switch (value) {
+  'managed_scan' => 'Managed Scan',
+  'monitor_mode' => 'Monitor Mode',
+  'bluetooth_scan' => 'Active Scan',
+  'pcap_replay' => 'PCAP Replay',
+  _ => _text(value),
+};
+
+String _observationSources(Json record) {
+  final origins = record['observation_sources'];
+  if (origins is List) {
+    final labels = origins.map(_sourceLabel).nonNulls.toSet();
+    if (labels.isNotEmpty) return labels.join(' / ');
+  }
+  return _sourceLabel(record['observation_source']) ?? '未报告';
+}
+
+String? _observationTime(Object? value) {
+  if (value is int && value >= 0 && value < 10000000000) {
+    return DateTime.fromMillisecondsSinceEpoch(
+      value * 1000,
+      isUtc: true,
+    ).toIso8601String();
+  }
+  return _text(value);
+}
 
 String? _bytes(Object? value) {
   if (value is! num || !value.isFinite || value < 0) return null;

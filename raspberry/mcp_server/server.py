@@ -23,7 +23,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from raspberry.enrollment.registry import Registry
 
 from . import device_observations
-from .capabilities import NETWORK_TOOLS, PLANNED_MUTATING_TOOLS, CapabilityStatus
+from .capabilities import NETWORK_TOOLS, MUTATING_TOOLS, CapabilityStatus
 from .wireless_service import WirelessError, WirelessService
 
 
@@ -34,6 +34,8 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 Observation = Callable[..., dict[str, Any]]
 StatusDetail = tuple[CapabilityStatus, str]
+CaptureId = Annotated[str, Field(min_length=1, max_length=255, description="An id returned by list_captures.")]
+Confirmation = Annotated[bool, Field(strict=True, description="Explicit operator confirmation for this operation.")]
 NOT_IMPLEMENTED = "This capability is not implemented."
 
 
@@ -102,7 +104,7 @@ def create_app(
         status: Callable[[], StatusDetail] | None = None,
         annotations: ToolAnnotations = READ_ONLY,
     ) -> None:
-        async def execute(**arguments: str) -> CallToolResult:
+        async def execute(**arguments: Any) -> CallToolResult:
             if collect is None:
                 return _failure(name, CapabilityStatus.UNAVAILABLE, "CAPABILITY_UNAVAILABLE", NOT_IMPLEMENTED)
             try:
@@ -125,7 +127,27 @@ def create_app(
         ) -> CallToolResult:
             return await execute(ap_id=ap_id)
 
-        handler = ap_details if name == "get_ap_details" else without_arguments
+        async def bluetooth_details(
+            device_id: Annotated[str, Field(min_length=1, max_length=256, description="An id from get_bluetooth_devices.")],
+        ) -> CallToolResult:
+            return await execute(device_id=device_id)
+
+        async def file_metadata(capture_id: CaptureId) -> CallToolResult:
+            return await execute(capture_id=capture_id)
+
+        async def replay(capture_id: CaptureId, confirm: Confirmation) -> CallToolResult:
+            return await execute(capture_id=capture_id, confirm=confirm)
+
+        async def stop_replay(confirm: Confirmation) -> CallToolResult:
+            return await execute(confirm=confirm)
+
+        handler = {
+            "get_ap_details": ap_details,
+            "get_bluetooth_device_details": bluetooth_details,
+            "get_capture_metadata": file_metadata,
+            "replay_capture": replay,
+            "stop_capture_replay": stop_replay,
+        }.get(name, without_arguments)
         mcp.add_tool(handler, name=name, description=description, annotations=annotations)
         capabilities[name] = domain, status or partial(_check_status, collect)
 
@@ -173,7 +195,7 @@ def create_app(
             register(
                 name, domain, description if implemented else f"{description} Planned capability, currently unavailable.",
                 partial(wireless.call, name) if implemented else None,
-                annotations=WRITE if name in PLANNED_MUTATING_TOOLS else READ_ONLY,
+                annotations=WRITE if name in MUTATING_TOOLS else READ_ONLY,
             )
 
     app = mcp.streamable_http_app()

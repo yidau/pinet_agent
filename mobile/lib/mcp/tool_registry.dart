@@ -22,7 +22,24 @@ class KismetStatus {
         _ => null,
       },
       wirelessStatus = _status(data['wireless_status']),
-      reason = data['reason'] is String ? data['reason'] as String : null;
+      reason = data['reason'] is String ? data['reason'] as String : null,
+      sources = _sourceStates(data['source_states']);
+
+  static Map<String, ({CapabilityStatus status, String? reason})> _sourceStates(
+    Object? raw,
+  ) {
+    if (raw is! Json) return const {};
+    return Map.unmodifiable({
+      for (final entry in raw.entries)
+        if (entry.value case final Json details)
+          entry.key: (
+            status: _status(details['status']),
+            reason: details['reason'] is String
+                ? (details['reason'] as String).trim()
+                : null,
+          ),
+    });
+  }
 
   final bool? installed;
   final bool? running;
@@ -30,6 +47,7 @@ class KismetStatus {
   final int? datasourceCount;
   final CapabilityStatus wirelessStatus;
   final String? reason;
+  final Map<String, ({CapabilityStatus status, String? reason})> sources;
 }
 
 class DeviceTool {

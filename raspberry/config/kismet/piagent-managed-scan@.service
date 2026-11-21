@@ -1,0 +1,27 @@
+[Unit]
+Description=PocketNet one-shot managed Wi-Fi scan (%i)
+After=piagent-kismet.service
+
+[Service]
+Type=oneshot
+User=piagent-scan
+Group=piagent-scan
+WorkingDirectory=/usr/lib/piagent-managed-scan
+EnvironmentFile=/etc/piagent-kismet/managed-scan.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m raspberry.mcp_server.managed_scan %i
+RuntimeDirectory=piagent-managed-scan
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=28
+TimeoutStopSec=3
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_NETLINK AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
+UMask=0027

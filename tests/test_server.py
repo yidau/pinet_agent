@@ -53,8 +53,9 @@ class DeviceMcpTests(unittest.TestCase):
     NETWORK_DOMAINS = {
         "kismet": {
             "get_kismet_status", "get_kismet_version", "get_kismet_datasources",
-            "get_kismet_devices", "get_kismet_alerts", "get_kismet_capture_status",
+            "get_kismet_devices", "get_kismet_alerts", "get_kismet_capture_status", "get_kismet_datasource_status",
         },
+        "bluetooth": {"get_bluetooth_devices", "get_bluetooth_device_details"},
         "wireless_discovery": {
             "scan_wireless_environment", "get_access_points", "get_ap_details",
             "get_wireless_clients", "get_wifi_channels",
@@ -69,6 +70,7 @@ class DeviceMcpTests(unittest.TestCase):
             "list_captures", "get_capture_metadata", "analyze_packet_capture",
             "analyze_protocol_distribution", "analyze_dns_behavior",
             "list_wireless_captures", "get_packet_statistics", "get_protocol_distribution",
+            "get_capture_status", "replay_capture", "stop_capture_replay",
         },
         "security_analysis": {
             "get_security_events", "detect_rogue_ap_candidates", "detect_arp_anomalies",
@@ -127,9 +129,10 @@ class DeviceMcpTests(unittest.TestCase):
             issue_token=lambda _device: token, enable_wifi=lambda _credential: None,
         )
         self.shared_token = "s" * 32
-        app = create_app(
-            root, self.shared_token, ["testserver"], registry.database, wireless_service=WirelessService(adapter),
-        )
+        self.radio_scan = {"status": "DEGRADED", "reason": "No operator scan yet.", "source_uuid": None,
+                           "access_points": [], "observed_at": None, "truncated": False}
+        service = WirelessService(adapter, scan_reader=lambda: self.radio_scan)
+        app = create_app(root, self.shared_token, ["testserver"], registry.database, wireless_service=service)
         self.client = self.enterContext(TestClient(app))
         self.headers = {
             "Authorization": f"Bearer {token}",
@@ -150,7 +153,7 @@ class DeviceMcpTests(unittest.TestCase):
         result = self.request("initialize", {
             "protocolVersion": "2025-11-25",
             "capabilities": {},
-            "clientInfo": {"name": "PocketNet AI", "version": "0.6.0"},
+                "clientInfo": {"name": "PocketNet AI", "version": "0.7.0"},
         })
         self.assertEqual(result["serverInfo"]["name"], "PocketNet")
         self.headers["MCP-Protocol-Version"] = result["protocolVersion"]
@@ -182,20 +185,91 @@ class DeviceMcpTests(unittest.TestCase):
 
         tools = self.request("tools/list")["tools"]
         self.assertCountEqual([tool["name"] for tool in tools], expected.keys())
-        self.assertEqual(self.capabilities(), expected)
+        actual = self.capabilities()
+        # Helper installation and the operator's replay directory belong to the local host.
+        # Assert their domains here. C1/C6 cover their status with isolated files and helpers.
+        host_dependent = {"get_bluetooth_devices", "get_bluetooth_device_details", "list_captures",
+                          "get_capture_metadata", "get_capture_status", "replay_capture", "stop_capture_replay"}
+        self.assertEqual(set(actual), set(expected))
+        for name, (status, domain) in expected.items():
+            self.assertEqual(actual[name][1], domain)
+            if name not in host_dependent:
+                self.assertEqual(actual[name][0], status)
+        schemas = {
+            "get_ap_details": {"ap_id": "string"}, "get_bluetooth_device_details": {"device_id": "string"},
+            "get_capture_metadata": {"capture_id": "string"},
+            "replay_capture": {"capture_id": "string", "confirm": "boolean"}, "stop_capture_replay": {"confirm": "boolean"},
+        }
         for tool in tools:
             with self.subTest(tool=tool["name"]):
                 self.assertTrue(tool["description"].strip())
                 schema = tool["inputSchema"]
                 Draft202012Validator.check_schema(schema)
                 self.assertEqual(schema["type"], "object")
-                if tool["name"] == "get_ap_details":
-                    self.assertEqual(schema["required"], ["ap_id"])
-                    self.assertEqual(schema["properties"]["ap_id"]["type"], "string")
-                else:
-                    self.assertFalse(schema.get("properties"))
+                params = schemas.get(tool["name"], {})
+                self.assertEqual(set(schema.get("required", ())), set(params))
+                self.assertEqual({k: v["type"] for k, v in schema["properties"].items()}, params)
+                if tool["name"] in {"replay_capture", "stop_capture_replay"}:
+                    self.assertFalse(tool["annotations"]["readOnlyHint"])
                 self.assertFalse(schema["additionalProperties"])
         self.assertTrue(self.call("get_system_info", {"unexpected": 1})["isError"])
+
+    def test_managed_report_enables_ap_queries_only_while_source_matches(self):
+        self.initialize()
+        ident = "532afebe-ba15-45e7-9f8f-a661019c86fc"
+        self.api["GET", "/datasource/all_sources.json"] = [
+            {"kismet.datasource.name": "PocketNet", "kismet.datasource.uuid": ident,
+             "kismet.datasource.hardware": "IEEE80211 scan"},
+        ]
+        self.radio_scan.update(status="AVAILABLE", reason="", source_uuid=ident)
+        summary = self.call("get_kismet_datasource_status")["structuredContent"]["source_states"]
+        self.assertEqual(summary["managed_scan"]["status"], "AVAILABLE")
+        self.assertEqual(summary["monitor_mode"]["status"], "DEGRADED")
+        self.assertEqual(self.call("get_access_points")["structuredContent"]["access_points"], [])
+        self.assertIsNone(self.call("scan_wireless_environment")["structuredContent"]["client_count"])
+        self.assertTrue(self.call("get_wireless_clients")["isError"])
+
+        mac = "02:00:00:00:00:01"
+        self.radio_scan["access_points"] = [{"mac": mac, "id": mac, "name": None, "channel": "6",
+                                             "security": None, "kismet_reported": False, "rssi_dbm": -56}]
+        one = self.call("get_ap_details", {"ap_id": mac})["structuredContent"]["access_point"]
+        self.assertEqual(one["observation_source"], "managed_scan")
+        self.assertIsNone(one["ssid"])
+        self.assertEqual(self.call("get_wifi_channels")["structuredContent"]["channels"],
+                         [{"channel": "6", "device_count": 1}])
+        self.api["GET", "/datasource/all_sources.json"] = []
+        self.assertEqual(self.call("get_access_points")["structuredContent"]["status"], "degraded")
+
+    def test_monitor_rows_are_selected_from_the_live_source(self):
+        self.initialize()
+        monitor_uuid = "51111234-33aa-48bb-9522-daef000000ab"
+        recording_uuid = "a4001234-33aa-48bb-9522-daef000000cd"
+        self.api["GET", "/datasource/all_sources.json"] = [
+            {"kismet.datasource.name": driver, "kismet.datasource.uuid": ident,
+             "kismet.datasource.type_driver": {"kismet.datasource.driver.type": driver},
+             "kismet.datasource.running": True, "kismet.datasource.paused": False, "kismet.datasource.error": False}
+            for driver, ident in (("linuxwifi", monitor_uuid), ("pcapfile", recording_uuid))
+        ]
+        def ap(ident):
+            return {"kismet.device.base.key": ident, "kismet.device.base.type": "Wi-Fi AP",
+                    "kismet.device.base.macaddr": ident, "kismet.device.base.phyname": "IEEE802.11",
+                    "kismet.device.base.channel": "6"}
+        live, offline = ap("02:00:00:00:00:01"), ap("02:00:00:00:00:02")
+        live["kismet.device.base.seenby"] = {"1": {"kismet.common.seenby.uuid": monitor_uuid}}
+        self.api["POST", "/devices/views/all/devices.json"] = {"data": [live, offline], "recordsFiltered": 2}
+        view = "/devices/views/seenby-" + monitor_uuid.upper() + "/devices.json"
+        self.api["POST", view] = {"data": [live], "recordsFiltered": 1}
+        rows = self.call("get_access_points")["structuredContent"]["access_points"]
+        self.assertEqual([(row["id"], row["observation_source"]) for row in rows],
+                         [("02:00:00:00:00:01", "monitor_mode")])
+
+    def test_replay_requires_explicit_boolean_confirmation(self):
+        self.initialize()
+        for name, fields in (("replay_capture", {"capture_id": "sample.pcap"}), ("stop_capture_replay", {})):
+            self.assertTrue(self.call(name, fields)["isError"])
+            response = self.call(name, {**fields, "confirm": False})
+            self.assertTrue(response["isError"])
+            self.assertEqual(response["structuredContent"]["error_code"], "CONFIRMATION_REQUIRED")
 
     def test_existing_device_tools_return_observations(self):
         self.initialize()

@@ -213,9 +213,17 @@ class DevicePanel extends StatelessWidget {
   }
 }
 
+const sourceLabels = {
+  'managed_scan': 'Wi-Fi Managed Scan',
+  'monitor_mode': 'Wi-Fi Monitor Mode',
+  'bluetooth_scan': 'Bluetooth Active Scan',
+  'pcap_replay': 'PCAP Replay',
+};
+
 const _domains = <String, (String, IconData)>{
   'device': ('设备信息', Icons.memory_outlined),
   'kismet': ('Kismet', Icons.sensors),
+  'bluetooth': ('蓝牙发现', Icons.bluetooth_outlined),
   'wireless_discovery': ('无线发现', Icons.wifi_find),
   'wireless_monitoring': ('无线监测', Icons.monitor_heart_outlined),
   'network_discovery': ('网络发现', Icons.hub_outlined),
@@ -270,6 +278,22 @@ class _Capabilities extends StatelessWidget {
           ),
           if (kismet.reason case final reason? when reason.isNotEmpty)
             Text(reason, style: theme.textTheme.bodySmall),
+          if (kismet.sources.isNotEmpty)
+            for (final entry in sourceLabels.entries)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${entry.value} · ${capabilityStatusLabel(kismet.sources[entry.key]?.status ?? CapabilityStatus.unknown)}',
+                    ),
+                    if (kismet.sources[entry.key]?.reason case final reason?
+                        when reason.isNotEmpty)
+                      Text(reason, style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
           const Divider(),
         ],
         for (final domain in [..._domains.keys, 'other'])
