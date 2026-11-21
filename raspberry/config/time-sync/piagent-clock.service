@@ -1,0 +1,19 @@
+[Unit]
+Description=PiAgent restricted clock adjustment
+Requires=piagent-clock.socket
+After=piagent-clock.socket
+
+[Service]
+User=piagent-clock
+Group=piagent-clock
+WorkingDirectory=/opt/piagent-time-sync
+ExecStart=/usr/bin/python3 -B -s -m raspberry.time_sync.clock_helper
+NoNewPrivileges=yes
+AmbientCapabilities=CAP_SYS_TIME
+CapabilityBoundingSet=CAP_SYS_TIME
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+Restart=on-failure

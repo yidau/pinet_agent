@@ -1,0 +1,12 @@
+[Unit]
+Description=PiAgent clock adjustment socket
+
+[Socket]
+ListenStream=/run/piagent-clock.sock
+SocketUser=piagent-ble
+SocketGroup=piagent-ble
+SocketMode=0600
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

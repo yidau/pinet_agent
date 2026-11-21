@@ -10,6 +10,7 @@ import 'llm/llm_client.dart';
 import 'mcp/mcp_client.dart';
 import 'network.dart';
 import 'storage/history.dart';
+import 'time_sync/time_sync_screen.dart';
 
 void main() => runApp(const PiAgentApp());
 
@@ -217,6 +218,16 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: const Text('PiAgent'),
         actions: [
+          if (Platform.isAndroid || Platform.isIOS)
+            IconButton(
+              tooltip: '蓝牙校时',
+              icon: const Icon(Icons.access_time),
+              onPressed: _busy
+                  ? null
+                  : () => Navigator.of(context).push<void>(
+                      MaterialPageRoute(builder: (_) => const TimeSyncScreen()),
+                    ),
+            ),
           TextButton.icon(
             onPressed: _busy ? null : _settings,
             icon: const Icon(Icons.settings_ethernet),

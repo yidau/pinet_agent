@@ -1,7 +1,7 @@
 name: piagent
 description: Mobile agent for Raspberry Pi system management and development.
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: '>=3.13.0 <4.0.0'
@@ -10,9 +10,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_reactive_ble: 5.5.0
   http: ^1.6.0
   material_ui: ^1.11.1
   path: ^1.9.1
+  # Keep the BLE implementation compatible with the app's legacy Kotlin mode.
+  reactive_ble_mobile: 5.5.0
   sqflite: ^2.4.6
   sqflite_common_ffi: '>=2.3.6 <2.4.0'
   sqlite3: ^2.9.4

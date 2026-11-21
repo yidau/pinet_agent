@@ -26,6 +26,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>PiAgent 需要通过蓝牙连接树莓派，以同步系统时间。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>PiAgent 需要访问本地网络，才能连接树莓派并执行你发起的任务。</string>
 	<key>UIApplicationSceneManifest</key>

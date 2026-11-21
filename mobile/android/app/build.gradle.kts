@@ -1,3 +1,5 @@
+import com.android.build.api.variant.LibraryAndroidComponentsExtension
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -46,4 +48,14 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+// The BLE plugin defaults to API 33, below the minimum required by AndroidX.
+val appCompileSdk = flutter.compileSdkVersion
+rootProject.findProject(":reactive_ble_mobile")?.let { ble ->
+    ble.plugins.withId("com.android.library") {
+        ble.extensions.getByType<LibraryAndroidComponentsExtension>().finalizeDsl { library ->
+            library.compileSdk = appCompileSdk
+        }
+    }
 }
