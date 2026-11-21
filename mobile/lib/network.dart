@@ -9,13 +9,15 @@ typedef Json = Map<String, dynamic>;
 
 const bundledMcpUrl = String.fromEnvironment('PIAGENT_MCP_URL');
 
-http.Client mcpHttpClient(Uri endpoint) {
+http.Client mcpHttpClient(Uri endpoint, {String? caPem}) {
   const certificate = String.fromEnvironment('PIAGENT_MCP_CA');
-  if (certificate.isEmpty || endpoint != Uri.tryParse(bundledMcpUrl)) {
-    return http.Client();
-  }
-  final context = SecurityContext()
-    ..setTrustedCertificatesBytes(base64Decode(certificate));
+  final trusted = caPem != null
+      ? utf8.encode(caPem)
+      : certificate.isNotEmpty && endpoint == Uri.tryParse(bundledMcpUrl)
+      ? base64Decode(certificate)
+      : null;
+  if (trusted == null) return http.Client();
+  final context = SecurityContext()..setTrustedCertificatesBytes(trusted);
   final client = HttpClient(context: context)..findProxy = (_) => 'DIRECT';
   return IOClient(client);
 }

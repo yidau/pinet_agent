@@ -27,7 +27,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>PiAgent 需要通过蓝牙连接树莓派，以同步系统时间。</string>
+	<string>PiAgent 需要通过蓝牙连接树莓派，以注册手机和同步系统时间。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>PiAgent 需要相机来扫描树莓派的永久注册二维码。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>PiAgent 需要访问本地网络，才能连接树莓派并执行你发起的任务。</string>
 	<key>UIApplicationSceneManifest</key>

@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import hashlib
+import hmac
 import logging
 import re
 import secrets
@@ -50,6 +51,7 @@ DBUS = "org.freedesktop.DBus"
 DBUS_PATH = "/org/freedesktop/DBus"
 APP_PATH = "/net/piagent/time_sync"
 SERVICE_PATH = APP_PATH + "/service0"
+ENROLLMENT_PATH = APP_PATH + "/service1"
 ADVERT_PATH = "/net/piagent/time_advertisement"
 CLOCK_SOCKET = "/run/piagent-clock.sock"
 PEER_FLAGS = ("Connected", "Paired", "Bonded", "Trusted")
@@ -90,11 +92,14 @@ class Session:
 
 
 class TimeSync:
-    def __init__(self, bus: MessageBus, owner: str, adapter: str, peer: str):
+    def __init__(self, bus: MessageBus, owner: str, adapter: str, peer: str, enrollment=None):
         self.bus = bus
         self.owner = owner
         self.adapter = adapter
         self.peer = peer
+        self.enrollment = enrollment
+        self.registered_device: str | None = None
+        self.saved_results: dict[str, tuple[int, int, int, int]] = {}
         self.peer_path: str | None = None
         self.connection_epoch = 0
         self.session: Session | None = None
@@ -109,7 +114,7 @@ class TimeSync:
         # Only bluetoothd may supply a Device1 object path to application methods.
         if message.message_type == MessageType.METHOD_CALL and (
             message.interface == ADVERT_IFACE and message.path == ADVERT_PATH
-            or message.interface == GATT_IFACE and message.path.startswith(SERVICE_PATH + "/")
+            or message.interface == GATT_IFACE and message.path.startswith((SERVICE_PATH + "/", ENROLLMENT_PATH + "/"))
         ):
             if message.sender != self.owner:
                 return Message.new_error(
@@ -118,6 +123,15 @@ class TimeSync:
                 )
         if message.message_type != MessageType.SIGNAL:
             return None
+        if self.enrollment is not None and message.sender == self.owner:
+            if message.interface == PROPERTIES_IFACE and message.member == "PropertiesChanged" and message.body[0] == DEVICE_IFACE:
+                changed, invalidated = message.body[1:]
+                connected = changed.get("Connected")
+                blocked = changed.get("Blocked")
+                if (connected is not None and not connected.value) or (blocked is not None and blocked.value) or "Connected" in invalidated:
+                    self.enrollment.disconnect(message.path)
+            elif message.interface == MANAGER_IFACE and message.member == "InterfacesRemoved" and DEVICE_IFACE in message.body[1]:
+                self.enrollment.disconnect(message.body[0])
         if (
             message.sender == DBUS and message.path == DBUS_PATH
             and message.interface == DBUS and message.member == "NameOwnerChanged"
@@ -137,7 +151,7 @@ class TimeSync:
                 ) or (
                     "Blocked" in changed and changed["Blocked"].value
                 ) or (
-                    "Address" in changed and changed["Address"].value.upper() != self.peer
+                    self.enrollment is None and "Address" in changed and changed["Address"].value.upper() != self.peer
                 ) or (
                     "Adapter" in changed and changed["Adapter"].value != self.adapter
                 ):
@@ -149,13 +163,30 @@ class TimeSync:
                 self.invalidate_session()
         return None
 
-    async def authorize(self, options: dict) -> None:
+    async def authorize(self, options: dict) -> bytes | None:
         if options.get("offset") and options["offset"].value != 0:
             raise ble_error("InvalidOffset", "A complete frame is required")
         if "link" in options and options["link"].value.upper() != "LE":
             raise ble_error("NotAuthorized", "A Bluetooth LE link is required")
         path = options["device"].value if "device" in options else ""
-        if not self.peer or not re.fullmatch(re.escape(self.adapter) + r"/dev_(?:[0-9A-F]{2}_){5}[0-9A-F]{2}", path):
+        if not re.fullmatch(re.escape(self.adapter) + r"/dev_(?:[0-9A-F]{2}_){5}[0-9A-F]{2}", path):
+            raise ble_error("NotAuthorized", "Enroll a bonded phone before synchronizing")
+        if self.enrollment is not None:
+            grant = await self.enrollment.grant(path)
+            if grant is None or self.bluez_gone.is_set():
+                raise ble_error("NotAuthorized", "Authenticate a registered phone before synchronizing")
+            if self.peer_path != path or self.registered_device != grant.device_id:
+                if self.last_result[2] == PENDING:
+                    raise ble_error("InProgress", "Clock adjustment is in progress")
+                if self.registered_device != grant.device_id:
+                    if self.registered_device is not None:
+                        self.saved_results[self.registered_device] = self.last_result
+                    self.last_result = self.saved_results.pop(grant.device_id, (0, 0, NO_RESULT, 0))
+                    self.registered_device = grant.device_id
+                self.invalidate_session()
+                self.peer_path = path
+            return grant.ble_key
+        if not self.peer:
             raise ble_error("NotAuthorized", "Enroll a bonded phone before synchronizing")
 
         epoch = self.connection_epoch
@@ -176,6 +207,7 @@ class TimeSync:
         if self.peer_path != path:
             self.invalidate_session()
             self.peer_path = path
+        return None
 
     def active_session(self) -> Session:
         session = self.session
@@ -208,7 +240,7 @@ class TimeSync:
         return RESPONSE.pack(sample_id, probe.t2, probe.response[0])
 
     async def submit(self, value: bytes, options: dict, received: tuple[int, int]) -> None:
-        await self.authorize(options)
+        ble_key = await self.authorize(options)
         if (
             ("prepare-authorize" in options and options["prepare-authorize"].value)
             or ("type" in options and options["type"].value != "request")
@@ -218,7 +250,13 @@ class TimeSync:
             raise ble_error("InvalidValueLength", "Invalid time-sync frame")
         opcode, nonce, sample_id, timestamp = REQUEST.unpack(value)
         session = self.active_session()
-        if nonce != session.nonce or not 1 <= sample_id <= 5:
+        if ble_key is None:
+            valid_nonce = nonce == session.nonce
+        else:
+            raw = REQUEST.pack(opcode, session.nonce, sample_id, timestamp)
+            expected = hmac.digest(ble_key, b"piagent/time-sync/request/v3" + raw, "sha256")[:8]
+            valid_nonce = hmac.compare_digest(value[1:9], expected)
+        if not valid_nonce or not 1 <= sample_id <= 5:
             raise ble_error("NotPermitted", "Invalid or stale request")
 
         if opcode == PROBE:
@@ -262,6 +300,8 @@ class TimeSync:
         try:
             async with asyncio.timeout(5):
                 reader, writer = await asyncio.open_unix_connection(CLOCK_SOCKET)
+                if self.enrollment is not None and await self.enrollment.grant(self.peer_path) is None:
+                    return REJECTED, 0
                 if (
                     self.session is not session
                     or mono_ms() - session.opened >= SESSION_MS
@@ -316,6 +356,8 @@ class TimeCharacteristic(ServiceInterface):
     def Flags(self) -> "as":
         if self.uuid == DEVICE_UUID:
             return ["read"]
+        if self.sync.enrollment is not None:
+            return ["write"] if self.uuid == REQUEST_UUID else ["read"]
         if self.uuid == REQUEST_UUID:
             return ["encrypt-authenticated-write"]
         return ["encrypt-authenticated-read"]
@@ -345,9 +387,10 @@ class TimeCharacteristic(ServiceInterface):
 
 
 class Advertisement(ServiceInterface):
-    def __init__(self, sync: TimeSync):
+    def __init__(self, sync: TimeSync, advertised_service: str = SERVICE_UUID):
         super().__init__(ADVERT_IFACE)
         self.sync = sync
+        self.advertised_service = advertised_service
 
     @dbus_property(access=PropertyAccess.READ)
     def Type(self) -> "s":
@@ -355,7 +398,7 @@ class Advertisement(ServiceInterface):
 
     @dbus_property(access=PropertyAccess.READ)
     def ServiceUUIDs(self) -> "as":
-        return [SERVICE_UUID]
+        return [self.advertised_service]
 
     @dbus_property(access=PropertyAccess.READ)
     def LocalName(self) -> "s":
@@ -367,7 +410,7 @@ class Advertisement(ServiceInterface):
         self.sync.bluez_gone.set()
 
 
-async def serve(peer: str) -> None:
+async def serve(peer: str, enrollment_state: Path | None = None) -> None:
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     try:
         [owner] = await call(bus, DBUS, DBUS_PATH, DBUS, "GetNameOwner", "s", [BLUEZ])
@@ -384,7 +427,19 @@ async def serve(peer: str) -> None:
         adapter, adapter_properties = min(adapters, key=lambda entry: entry[0])
         digest = hashlib.blake2s(adapter_properties["Address"].value.encode(), digest_size=4)
         identity = ("PiAgent/" + digest.hexdigest()).encode("ascii")
-        sync = TimeSync(bus, owner, adapter, peer)
+        enrollment = None
+        advertised_service = SERVICE_UUID
+        if enrollment_state is not None:
+            from raspberry.enrollment.authority import Authority
+            from raspberry.enrollment.gatt import Enrollment, EnrollmentCharacteristic, EnrollmentService
+            from raspberry.enrollment.protocol import CHALLENGE, INFO, REQUEST as ENROLLMENT_REQUEST, RESULT as ENROLLMENT_RESULT, SERVICE
+
+            enrollment = Enrollment(Authority(enrollment_state), adapter, ENROLLMENT_PATH)
+            bus.export(ENROLLMENT_PATH, EnrollmentService())
+            for number, uuid in enumerate((INFO, CHALLENGE, ENROLLMENT_REQUEST, ENROLLMENT_RESULT)):
+                bus.export(f"{ENROLLMENT_PATH}/characteristic{number}", EnrollmentCharacteristic(enrollment, uuid))
+            advertised_service = SERVICE
+        sync = TimeSync(bus, owner, adapter, peer, enrollment)
         bus.add_message_handler(sync.handle_message)
         for rule in (
             "type='signal',sender='org.freedesktop.DBus',interface='org.freedesktop.DBus',"
@@ -397,10 +452,10 @@ async def serve(peer: str) -> None:
         bus.export(SERVICE_PATH, TimeService())
         for number, uuid in enumerate((DEVICE_UUID, REQUEST_UUID, RESPONSE_UUID, RESULT_UUID, STATUS_UUID)):
             bus.export(f"{SERVICE_PATH}/characteristic{number}", TimeCharacteristic(sync, uuid, identity))
-        bus.export(ADVERT_PATH, Advertisement(sync))
+        bus.export(ADVERT_PATH, Advertisement(sync, advertised_service))
         await call(bus, owner, adapter, "org.bluez.GattManager1", "RegisterApplication", "oa{sv}", [APP_PATH, {}])
         await call(bus, owner, adapter, "org.bluez.LEAdvertisingManager1", "RegisterAdvertisement", "oa{sv}", [ADVERT_PATH, {}])
-        LOG.info("Advertising PiAgent time sync on %s, phone enrollment=%s", adapter, bool(peer))
+        LOG.info("Advertising PiAgent on %s, permanent enrollment=%s", adapter, enrollment is not None)
         async with asyncio.TaskGroup() as tasks:
             disconnected = tasks.create_task(bus.wait_for_disconnect())
             bluez_stopped = tasks.create_task(sync.bluez_gone.wait())
@@ -414,14 +469,17 @@ async def serve(peer: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="PiAgent BLE time-sync GATT server")
-    parser.add_argument("--peer-file", type=Path, required=True)
+    parser.add_argument("--peer-file", type=Path)
+    parser.add_argument("--enrollment-state", type=Path)
     args = parser.parse_args()
+    if (args.peer_file is None) == (args.enrollment_state is None):
+        parser.error("Specify either a trusted peer file or a permanent enrollment state directory")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
-        peer = args.peer_file.read_text(encoding="ascii").strip().upper()
+        peer = args.peer_file.read_text(encoding="ascii").strip().upper() if args.peer_file else ""
         if peer and not re.fullmatch(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", peer):
             raise ValueError("Peer file must contain one bonded Bluetooth identity address")
-        asyncio.run(serve(peer))
+        asyncio.run(serve(peer, args.enrollment_state))
     except (OSError, ValueError, DBusError, TimeoutError, RuntimeError) as exc:
         LOG.error("BLE time-sync service stopped: %s", exc)
         raise SystemExit(1) from None

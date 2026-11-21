@@ -1,0 +1,2 @@
+cryptography>=45,<50
+qrcode>=8,<9

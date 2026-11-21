@@ -3,6 +3,7 @@ import hmac
 import logging
 import os
 import platform
+import sqlite3
 from functools import partial, wraps
 from pathlib import Path
 from typing import Annotated, Any
@@ -17,6 +18,8 @@ from pydantic import StringConstraints
 from starlette.datastructures import Headers
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+from raspberry.enrollment.registry import Registry
 
 from .sandbox import BuildResult, DockerSandbox
 from .workspace import Workspace
@@ -33,8 +36,12 @@ ProjectName = Annotated[str, StringConstraints(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{
 FileContent = Annotated[str, StringConstraints(max_length=65536)]
 
 
-def create_app(workspace_path: Path, token: str, hosts: list[str], sandbox: DockerSandbox) -> ASGIApp:
-    if len(token) < 32 or not token.isascii() or any(char.isspace() for char in token):
+def create_app(
+    workspace_path: Path, token: str, hosts: list[str], sandbox: DockerSandbox,
+    device_registry: Path | None = None,
+) -> ASGIApp:
+    registry = Registry(device_registry) if device_registry is not None else None
+    if registry is None and (len(token) < 32 or not token.isascii() or any(char.isspace() for char in token)):
         raise ValueError("Set PIAGENT_TOKEN to a random ASCII token of at least 32 characters")
 
     workspace = Workspace(workspace_path)
@@ -144,12 +151,24 @@ def create_app(workspace_path: Path, token: str, hosts: list[str], sandbox: Dock
         return sandbox.run(workspace.snapshot(name), test=True)
 
     app = mcp.streamable_http_app()
-    expected = f"Bearer {token}".encode("ascii")
+    expected = f"Bearer {token}".encode("ascii") if registry is None else b""
 
     async def authenticated(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
-            received = Headers(scope=scope).get("authorization", "").encode("latin-1")
-            if not hmac.compare_digest(received, expected):
+            authorization = Headers(scope=scope).get("authorization", "")
+            if registry is None:
+                permit = hmac.compare_digest(authorization.encode("latin-1"), expected)
+            else:
+                device_id = None
+                if authorization.startswith("Bearer "):
+                    try:
+                        device_id = await anyio.to_thread.run_sync(registry.authorize, authorization[7:])
+                    except (OSError, sqlite3.Error):
+                        AUDIT.warning("Device authorization database unavailable")
+                permit = device_id is not None
+                if permit:
+                    scope = {**scope, "piagent_device_id": device_id}
+            if not permit:
                 response = PlainTextResponse("Unauthorized", status_code=401, headers={"WWW-Authenticate": "Bearer"})
                 await response(scope, receive, send)
                 return
@@ -168,6 +187,7 @@ def main() -> None:
     default_workspace = Path(__file__).resolve().parents[1] / "workspace"
     parser.add_argument("--workspace", type=Path, default=default_workspace)
     parser.add_argument("--image", default="piagent-builder:0.1")
+    parser.add_argument("--device-registry", type=Path, default=os.environ.get("PIAGENT_DEVICE_REGISTRY") or None)
     args = parser.parse_args()
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         parser.error("Run PiAgent from an unprivileged account")
@@ -177,7 +197,7 @@ def main() -> None:
         parser.error("A non-loopback listener requires TLS and at least one --allow-host")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     try:
-        app = create_app(args.workspace, os.environ.get("PIAGENT_TOKEN", ""), args.allow_host, DockerSandbox(args.image))
+        app = create_app(args.workspace, os.environ.get("PIAGENT_TOKEN", ""), args.allow_host, DockerSandbox(args.image), args.device_registry)
     except ValueError as error:
         parser.error(str(error))
     uvicorn.run(

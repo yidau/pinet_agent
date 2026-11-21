@@ -1,22 +1,23 @@
 import 'dart:async';
-import 'dart:io';
 
-import 'package:flutter/services.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../enrollment/enrollment_client.dart';
+import '../enrollment/enrollment_profile.dart';
 import 'time_sync_client.dart';
 import 'time_sync_protocol.dart';
 
 class TimeSyncScreen extends StatefulWidget {
-  const TimeSyncScreen({super.key});
+  const TimeSyncScreen({super.key, this.profile});
+
+  final EnrollmentProfile? profile;
 
   @override
   State<TimeSyncScreen> createState() => _TimeSyncScreenState();
 }
 
 class _TimeSyncScreenState extends State<TimeSyncScreen> {
-  static const _permissions = MethodChannel('net.piagent.piagent/time_sync');
   static const _waitingForResult = '暂时无法确认校时结果，重新连接后可查询。';
   late final _ble = FlutterReactiveBle();
   final _nearby = <String, DiscoveredDevice>{};
@@ -54,12 +55,7 @@ class _TimeSyncScreenState extends State<TimeSyncScreen> {
       _status = '正在扫描树莓派…';
     });
     try {
-      final allowed =
-          !Platform.isAndroid ||
-          await _permissions.invokeMethod<bool>(
-                'requestBluetoothPermissions',
-              ) ==
-              true;
+      final allowed = await requestBluetoothPermissions();
       if (!mounted || epoch != _scanEpoch) return;
       if (!allowed) {
         await _stopScan(message: '请授予蓝牙扫描和连接所需的权限。');
@@ -67,7 +63,11 @@ class _TimeSyncScreenState extends State<TimeSyncScreen> {
       }
       _scan = _ble
           .scanForDevices(
-            withServices: [TimeSyncClient.service],
+            withServices: [
+              widget.profile == null
+                  ? TimeSyncClient.service
+                  : EnrollmentClient.service,
+            ],
             scanMode: ScanMode.lowLatency,
             requireLocationServicesEnabled: false,
           )
@@ -109,7 +109,7 @@ class _TimeSyncScreenState extends State<TimeSyncScreen> {
   Future<void> _connect(DiscoveredDevice device) async {
     if (_client != null || _disconnecting) return;
     final epoch = ++_connectionEpoch;
-    final client = TimeSyncClient(_ble, device.id);
+    final client = TimeSyncClient(_ble, device.id, profile: widget.profile);
     setState(() {
       _client = client;
       _ready = false;
@@ -175,11 +175,13 @@ class _TimeSyncScreenState extends State<TimeSyncScreen> {
   }
 
   Future<void> _checkDevice(TimeSyncClient client, int epoch) async {
-    setState(() => _status = '正在验证蓝牙配对和设备授权…');
+    setState(() => _status = '正在验证蓝牙和设备授权…');
     try {
+      await client.authenticate();
+      if (!_isCurrent(epoch)) return;
       final label = await client.readDeviceInfo();
       if (!_isCurrent(epoch)) return;
-      await client.status(allowPairing: true);
+      await client.status(allowPairing: widget.profile == null);
       if (!_isCurrent(epoch)) return;
       setState(() {
         _deviceLabel = label;
@@ -193,7 +195,9 @@ class _TimeSyncScreenState extends State<TimeSyncScreen> {
       setState(() {
         _status = _ready
             ? _waitingForResult
-            : '无法验证设备。请完成系统蓝牙配对，并由树莓派管理员授权此手机。';
+            : widget.profile == null
+            ? '无法验证设备。请完成系统蓝牙配对，并由树莓派管理员授权此手机。'
+            : '无法验证已注册的手机。请确认所选树莓派和手机授权状态。';
       });
     } finally {
       if (_isCurrent(epoch)) setState(() => _working = false);

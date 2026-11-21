@@ -1,6 +1,7 @@
 package net.piagent.piagent
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
@@ -9,6 +10,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var permissionResult: MethodChannel.Result? = null
+    private val enrollment by lazy { EnrollmentChannel(this) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -20,6 +22,8 @@ class MainActivity : FlutterActivity() {
                     result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "net.piagent.piagent/enrollment")
+            .setMethodCallHandler(enrollment::handle)
     }
 
     private fun requestBluetoothPermissions(result: MethodChannel.Result) {
@@ -53,6 +57,11 @@ class MainActivity : FlutterActivity() {
             )
             permissionResult = null
         }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        enrollment.onActivityResult(requestCode, resultCode, data)
     }
 
     companion object {

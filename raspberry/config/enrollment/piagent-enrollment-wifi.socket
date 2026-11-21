@@ -1,0 +1,12 @@
+[Unit]
+Description=PiAgent enrollment hotspot credential socket
+
+[Socket]
+ListenStream=/run/piagent-enrollment-wifi.sock
+SocketUser=piagent-ble
+SocketGroup=piagent-ble
+SocketMode=0600
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

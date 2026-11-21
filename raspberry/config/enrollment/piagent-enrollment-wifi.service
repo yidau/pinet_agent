@@ -1,0 +1,26 @@
+[Unit]
+Description=PiAgent restricted hostapd credential management
+Requires=piagent-enrollment-wifi.socket
+After=piagent-enrollment-wifi.socket piagent-hotspot.service
+
+[Service]
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I -B /opt/piagent-enrollment/raspberry/enrollment/wifi_helper.py
+StateDirectory=piagent-enrollment
+StateDirectoryMode=0700
+RuntimeDirectory=piagent-enrollment-wifi
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+Restart=on-failure

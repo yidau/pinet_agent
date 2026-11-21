@@ -1,11 +1,14 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 
+import '../enrollment/enrollment_client.dart';
+import '../enrollment/enrollment_profile.dart';
 import 'time_sync_protocol.dart';
 
 class TimeSyncClient {
-  TimeSyncClient(this._ble, this.deviceId);
+  TimeSyncClient(this._ble, this.deviceId, {this.profile});
 
   static final service = Uuid.parse(timeSyncServiceUuid);
   static final _device = Uuid.parse(timeSyncDeviceUuid);
@@ -17,6 +20,18 @@ class TimeSyncClient {
   static const _timeout = Duration(seconds: 5);
   final FlutterReactiveBle _ble;
   final String deviceId;
+  final EnrollmentProfile? profile;
+  List<int>? _sessionKey;
+
+  Future<void> authenticate() async {
+    if (profile case final registered?) {
+      final (_, key) = await EnrollmentClient(
+        _ble,
+        deviceId,
+      ).resume(registered);
+      _sessionKey = key;
+    }
+  }
 
   QualifiedCharacteristic _characteristic(Uuid id) => QualifiedCharacteristic(
     characteristicId: id,
@@ -27,9 +42,23 @@ class TimeSyncClient {
   Future<List<int>> _read(Uuid id, [Duration timeout = _timeout]) =>
       _ble.readCharacteristic(_characteristic(id)).timeout(timeout);
 
-  Future<void> _write(List<int> packet) => _ble
-      .writeCharacteristicWithResponse(_characteristic(_request), value: packet)
-      .timeout(_timeout);
+  Future<void> _write(List<int> packet) {
+    if (_sessionKey case final key?) {
+      final tag = Hmac(sha256, key).convert([
+        ...ascii.encode('piagent/time-sync/request/v3'),
+        ...packet,
+      ]).bytes;
+      packet.setRange(1, 9, tag);
+    } else if (profile != null) {
+      throw const FormatException('请先验证已注册的手机身份。');
+    }
+    return _ble
+        .writeCharacteristicWithResponse(
+          _characteristic(_request),
+          value: packet,
+        )
+        .timeout(_timeout);
+  }
 
   Future<String> readDeviceInfo() async {
     final label = utf8.decode(await _read(_device));

@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:material_ui/material_ui.dart';
 
 import 'agent/agent.dart';
+import 'enrollment/enrollment_profile.dart';
+import 'enrollment/enrollment_screen.dart';
 import 'llm/deepseek.dart';
 import 'llm/llm_client.dart';
 import 'mcp/mcp_client.dart';
@@ -42,7 +44,26 @@ class PiAgentApp extends StatelessWidget {
 }
 
 class Connection {
-  const Connection(this.mcp, this.token, this.llm, this.apiKey, this.model);
+  const Connection(
+    this.mcp,
+    this.token,
+    this.llm,
+    this.apiKey,
+    this.model, {
+    this.enrollmentCa,
+  });
+
+  factory Connection.fromEnrollment(
+    EnrollmentProfile profile,
+    Connection? previous,
+  ) => Connection(
+    profile.mcpUrl,
+    profile.token,
+    previous?.llm ?? Uri.parse(deepSeekChatUrl),
+    previous?.apiKey ?? '',
+    previous?.model ?? deepSeekDefaultModel,
+    enrollmentCa: profile.caPem,
+  );
 
   static Connection? fromBuildConfiguration() {
     const token = String.fromEnvironment('PIAGENT_MCP_TOKEN');
@@ -61,6 +82,9 @@ class Connection {
   final Uri llm;
   final String apiKey;
   final String model;
+  final String? enrollmentCa;
+
+  http.Client deviceClient() => mcpHttpClient(mcp, caPem: enrollmentCa);
 
   Future<String> resolveApiKey() async {
     if (apiKey.isNotEmpty) return apiKey;
@@ -88,12 +112,14 @@ class _ChatScreenState extends State<ChatScreen> {
   late final _history = widget.history ?? History();
   final _entries = <ChatEntry>[];
   Connection? _connection;
+  EnrollmentProfile? _enrollment;
   http.Client? _client;
   http.Client? _mcpClient;
   String? _activeTool;
   bool _busy = false;
   bool _loading = true;
   bool _historyWarning = false;
+  bool _enrollmentWarning = false;
 
   @override
   void initState() {
@@ -111,15 +137,41 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _restore() async {
+    await Future.wait([_restoreEnrollment(), _restoreHistory()]);
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _restoreEnrollment() async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    try {
+      final profile = await EnrollmentProfile.load();
+      if (mounted && profile != null) _useEnrollment(profile);
+    } catch (_) {
+      if (mounted) setState(() => _enrollmentWarning = true);
+    }
+  }
+
+  Future<void> _restoreHistory() async {
     try {
       final entries = await _history.load();
       if (mounted) setState(() => _entries.addAll(entries));
     } catch (_) {
       if (mounted) setState(() => _historyWarning = true);
-    } finally {
-      if (mounted) setState(() => _loading = false);
     }
   }
+
+  void _useEnrollment(EnrollmentProfile profile) => setState(() {
+    _enrollment = profile;
+    _connection = Connection.fromEnrollment(profile, _connection);
+    _enrollmentWarning = false;
+  });
+
+  Future<void> _enrollmentSettings() => Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) =>
+          EnrollmentScreen(profile: _enrollment, onRegistered: _useEnrollment),
+    ),
+  );
 
   Future<void> _record(ChatEntry entry) async {
     if (mounted) setState(() => _entries.add(entry));
@@ -163,7 +215,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final client = http.Client();
     _client = client;
     try {
-      final deviceClient = mcpHttpClient(connection.mcp);
+      final deviceClient = connection.deviceClient();
       _mcpClient = deviceClient;
       await _record(ChatEntry('user', message));
       final apiKey = await connection.resolveApiKey();
@@ -220,16 +272,24 @@ class _ChatScreenState extends State<ChatScreen> {
         actions: [
           if (Platform.isAndroid || Platform.isIOS)
             IconButton(
+              tooltip: '手机注册',
+              icon: const Icon(Icons.qr_code_scanner),
+              onPressed: _busy || _loading ? null : _enrollmentSettings,
+            ),
+          if (Platform.isAndroid || Platform.isIOS)
+            IconButton(
               tooltip: '蓝牙校时',
               icon: const Icon(Icons.access_time),
-              onPressed: _busy
+              onPressed: _busy || _loading
                   ? null
                   : () => Navigator.of(context).push<void>(
-                      MaterialPageRoute(builder: (_) => const TimeSyncScreen()),
+                      MaterialPageRoute(
+                        builder: (_) => TimeSyncScreen(profile: _enrollment),
+                      ),
                     ),
             ),
           TextButton.icon(
-            onPressed: _busy ? null : _settings,
+            onPressed: _busy || _loading ? null : _settings,
             icon: const Icon(Icons.settings_ethernet),
             label: Text(_connection == null ? '配置连接' : '连接设置'),
           ),
@@ -249,6 +309,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     const Padding(
                       padding: EdgeInsets.only(top: 8),
                       child: Text('本地历史记录暂不可用。'),
+                    ),
+                  if (_enrollmentWarning)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 8),
+                      child: Text('无法读取手机的注册信息。可以重新扫码注册。'),
                     ),
                   Expanded(
                     child: _loading
@@ -439,17 +504,26 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
       throw const FormatException('树莓派地址必须以 /mcp 结尾。');
     }
     final token = _token.text.trim();
+    final initial = widget.initial;
+    if (initial?.enrollmentCa != null &&
+        mcp != initial!.mcp &&
+        token == initial.token) {
+      throw const FormatException('更改树莓派地址时，请填写该地址对应的设备令牌。');
+    }
     if (token.length < 32) {
       throw const FormatException('请输入至少 32 个字符的设备令牌。');
     }
     return (mcp, token);
   }
 
+  String? _enrollmentCa(Uri endpoint) =>
+      widget.initial?.mcp == endpoint ? widget.initial?.enrollmentCa : null;
+
   Future<void> _testConnection() async {
     http.Client? client;
     try {
       final (endpoint, token) = _deviceSettings();
-      client = mcpHttpClient(endpoint);
+      client = mcpHttpClient(endpoint, caPem: _enrollmentCa(endpoint));
       setState(() {
         _probeClient = client;
         _systemInfo = null;
@@ -496,7 +570,14 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
       if (model.isEmpty) {
         throw const FormatException('请填写聊天使用的模型名称。');
       }
-      final connection = Connection(mcp, token, llm, apiKey, model);
+      final connection = Connection(
+        mcp,
+        token,
+        llm,
+        apiKey,
+        model,
+        enrollmentCa: _enrollmentCa(mcp),
+      );
       await connection.resolveApiKey();
       if (mounted) Navigator.pop(context, connection);
     } on FormatException catch (error) {
@@ -546,7 +627,11 @@ class _ConnectionDialogState extends State<_ConnectionDialog> {
                 secret: true,
                 hint: Platform.isWindows ? 'DeepSeek 可使用本地密钥文件' : null,
               ),
-              const Text('连接设置保存在当前应用进程中。'),
+              Text(
+                widget.initial?.enrollmentCa == null
+                    ? '连接设置保存在当前应用进程中。'
+                    : '注册信息保存在手机安全存储中。此处修改的设置仅在本次启动有效。',
+              ),
               if (_error != null)
                 Text(
                   _error!,
