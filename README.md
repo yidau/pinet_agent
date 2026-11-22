@@ -6,6 +6,8 @@ PocketNet AI 让已注册的安卓手机通过树莓派热点查询系统状态�
 
 V0.7.4 的无线页按 SSID 展示附近网络。点开网络可查看各 BSSID、信号、信道及其观测历史。[手机操作与已有设备更新步骤](docs/phone-controls.md)
 
+V0.8 在树莓派上管理限时无线观测，手机可以查看新增接入点、历史变化和会话摘要，也可以从 AP 详情发起有证据来源的 AI 调查。[V0.8 更新及实机验收](docs/v0.8-wireless.md)
+
 ## 1. 准备一台新的 Ubuntu 树莓派
 
 - 建议使用 Raspberry Pi 4B 和 **Ubuntu Server 26.04 LTS ARM64**。本项目曾在 Ubuntu 26.04.1 ARM64 上完成真机部署。Ubuntu Server 24.04 LTS 的 Python 版本也满足依赖要求。Ubuntu 22.04 自带 Python 3.10，建议先升级系统。 [Ubuntu 树莓派镜像与说明](https://ubuntu.com/hardware/docs/boards/how-to/ubuntu_supported/raspberry-pi/)

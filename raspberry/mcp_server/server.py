@@ -17,7 +17,7 @@ from mcp.server.transport_security import TransportSecurityMiddleware, Transport
 from mcp.types import CallToolResult, ContentBlock, TextContent, Tool, ToolAnnotations
 from pydantic import Field
 from starlette.datastructures import Headers
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -25,7 +25,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from raspberry.enrollment.registry import Registry
 
 from . import device_observations, phone_radio
-from .phone_captures import capture_routes
+from .phone_captures import RequestError, capture_routes, confirmed_command
 from .capabilities import NETWORK_TOOLS, MUTATING_TOOLS, CapabilityStatus
 from .wireless_service import WirelessError, WirelessService
 
@@ -39,6 +39,7 @@ Observation = Callable[..., dict[str, Any]]
 StatusDetail = tuple[CapabilityStatus, str]
 CaptureId = Annotated[str, Field(min_length=1, max_length=255, description="An id returned by list_captures.")]
 Confirmation = Annotated[bool, Field(strict=True, description="Explicit operator confirmation for this operation.")]
+ApId = Annotated[str, Field(min_length=1, max_length=256, description="A BSSID or id from the AP list or session evidence.")]
 NOT_IMPLEMENTED = "This capability is not implemented."
 
 
@@ -110,6 +111,8 @@ def create_app(
         annotations: ToolAnnotations = READ_ONLY,
     ) -> None:
         async def execute(**arguments: Any) -> CallToolResult:
+            if name in {"start_wireless_monitoring", "stop_wireless_monitoring"} and registry is None:
+                return _failure(name, CapabilityStatus.UNAVAILABLE, "ENROLLMENT_REQUIRED", "需要已注册手机确认此操作。")
             if collect is None:
                 return _failure(name, CapabilityStatus.UNAVAILABLE, "CAPABILITY_UNAVAILABLE", NOT_IMPLEMENTED)
             try:
@@ -127,10 +130,22 @@ def create_app(
         async def without_arguments() -> CallToolResult:
             return await execute()
 
-        async def ap_details(
-            ap_id: Annotated[str, Field(min_length=1, max_length=256, description="An id from get_access_points.")],
-        ) -> CallToolResult:
+        async def ap_details(ap_id: ApId) -> CallToolResult:
             return await execute(ap_id=ap_id)
+
+        async def investigation(
+            ap_id: ApId,
+            offset: Annotated[int, Field(strict=True, ge=0)] = 0,
+            snapshot_id: Annotated[str, Field(max_length=24)] = "",
+        ) -> CallToolResult:
+            return await execute(ap_id=ap_id, offset=offset, snapshot_id=snapshot_id)
+
+        async def start_monitoring(
+            confirm: Confirmation,
+            interval_seconds: Annotated[int, Field(strict=True, ge=30, le=3600)] = 30,
+            duration_seconds: Annotated[int, Field(strict=True, ge=1, le=3600)] = 600,
+        ) -> CallToolResult:
+            return await execute(confirm=confirm, interval_seconds=interval_seconds, duration_seconds=duration_seconds)
 
         async def bluetooth_details(
             device_id: Annotated[str, Field(min_length=1, max_length=256, description="An id from get_bluetooth_devices.")],
@@ -148,6 +163,9 @@ def create_app(
 
         handler = {
             "get_ap_details": ap_details,
+            "get_wireless_investigation": investigation,
+            "start_wireless_monitoring": start_monitoring,
+            "stop_wireless_monitoring": stop_replay,
             "get_bluetooth_device_details": bluetooth_details,
             "get_capture_metadata": file_metadata,
             "replay_capture": replay,
@@ -162,6 +180,8 @@ def create_app(
         entries = []
         for name, (domain, probe) in capabilities.items():
             status, reason = wireless_states[name] if name in wireless.tool_names else probe()
+            if name in {"start_wireless_monitoring", "stop_wireless_monitoring"} and registry is None:
+                status, reason = CapabilityStatus.UNAVAILABLE, "需要已注册手机确认此操作。"
             entry = {"name": name, "domain": domain, "status": status}
             if reason:
                 entry["reason"] = reason
@@ -227,16 +247,44 @@ def create_app(
         except phone_radio.RadioError as error:
             return JSONResponse({"message": str(error)}, status_code=error.status_code)
 
+    async def monitoring(request: Request) -> JSONResponse:
+        action = request.path_params.get("action")
+        if action not in (None, "start", "stop"):
+            return JSONResponse({"message": "Unknown monitoring action."}, status_code=404)
+        try:
+            if action is None:
+                result = await anyio.to_thread.run_sync(wireless.call, "get_wireless_monitoring_status")
+            else:
+                options = ("interval_seconds", "duration_seconds") if action == "start" else ()
+                args = await confirmed_command(request, {"confirm"}, options)
+                result = await anyio.to_thread.run_sync(partial(wireless.call, action + "_wireless_monitoring", **args))
+            return JSONResponse(result)
+        except WirelessError as exc:
+            code = 400 if exc.code == "INVALID_ARGUMENT" else 409
+            return JSONResponse({"message": str(exc), "status": exc.status, "error_code": exc.code}, status_code=code)
+        except RequestError as exc:
+            return JSONResponse({"message": str(exc)}, status_code=exc.status)
+        except (TimeoutError, ClientDisconnect):
+            return JSONResponse({"message": "监测请求未接收完整。"}, status_code=408)
+
     app = mcp.streamable_http_app()
     if registry is not None:
         app.routes.extend([
             Route("/operator/radio/status", radio, methods=["GET"]),
             Route("/operator/radio/{action}", radio, methods=["POST"]),
+            Route("/operator/monitoring/status", monitoring, methods=["GET"]),
+            Route("/operator/monitoring/{action}", monitoring, methods=["POST"]),
             *capture_routes(wireless),
         ])
     expected = f"Bearer {token}".encode("ascii") if registry is None else b""
 
     async def authenticated(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan":
+            try:
+                await app(scope, receive, send)
+            finally:
+                await anyio.to_thread.run_sync(wireless.monitoring.close)
+            return
         if scope["type"] == "http":
             authorization = Headers(scope=scope).get("authorization", "")
             if registry is None:

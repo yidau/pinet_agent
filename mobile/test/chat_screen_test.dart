@@ -22,6 +22,7 @@ class _DashboardConnection extends Connection {
   _DashboardConnection(
     this.calls, {
     this.v07 = false,
+    this.v08 = false,
     this.phoneControl = false,
   }) : super(
          Uri.parse('https://pi.example/mcp'),
@@ -33,11 +34,29 @@ class _DashboardConnection extends Connection {
 
   final List<String> calls;
   final bool v07;
+  final bool v08;
   final bool phoneControl;
   bool sourceConnected = false;
   Future<void>? bluetoothReadDelay;
   Json? accessPointsReply;
   Json? apDetailsReply;
+  String monitoringState = 'idle';
+  bool monitoringAvailable = false;
+
+  Json get monitoring => {
+    'state': monitoringState,
+    'session_id': monitoringState == 'idle' ? null : 'test-session',
+    'observation_source': monitoringState == 'idle' ? null : 'managed_scan',
+    'elapsed_seconds': monitoringState == 'idle' ? 0 : 64,
+    'scan_count': monitoringState == 'idle' ? 0 : 3,
+    'ap_count': monitoringState == 'idle' ? 0 : 2,
+    'new_ap_count': monitoringState == 'idle' ? 0 : 1,
+    'summary': {
+      'baseline_ap_count': 1,
+      'channel_change_count': 0,
+      'security_change_count': 0,
+    },
+  };
 
   Map<String, String> get _domains => {
     'get_capability_status': 'device',
@@ -52,6 +71,11 @@ class _DashboardConnection extends Connection {
     if (v07) 'get_bluetooth_devices': 'bluetooth',
     if (v07) 'get_ap_details': 'wireless_discovery',
     if (v07) 'get_capture_status': 'packet_analysis',
+    if (v08) ...{
+      'start_wireless_monitoring': 'wireless_monitoring',
+      'stop_wireless_monitoring': 'wireless_monitoring',
+      'get_wireless_monitoring_status': 'wireless_monitoring',
+    },
   };
 
   @override
@@ -61,6 +85,25 @@ class _DashboardConnection extends Connection {
       expect(request.headers['Authorization'], 'Bearer device-token');
       final action = request.url.path;
       calls.add('${request.method} $action');
+      if (action.startsWith('/operator/monitoring/')) {
+        final start = action.endsWith('/start');
+        expect(
+          jsonDecode(request.body),
+          start
+              ? {
+                  'confirm': true,
+                  'interval_seconds': 30,
+                  'duration_seconds': 600,
+                }
+              : {'confirm': true},
+        );
+        monitoringState = start ? 'running' : 'stopped';
+        return http.Response(
+          jsonEncode(monitoring),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
       if (action == '/operator/radio/wifi-scan') sourceConnected = true;
       return http.Response(
         jsonEncode({
@@ -101,7 +144,10 @@ class _DashboardConnection extends Connection {
                         'required': ['ap_id'],
                       }
                     : {'type': 'object'},
-                'annotations': {'readOnlyHint': true},
+                'annotations': {
+                  'readOnlyHint':
+                      !name.startsWith('start_') && !name.startsWith('stop_'),
+                },
               },
           ],
         };
@@ -148,6 +194,12 @@ class _DashboardConnection extends Connection {
                     'name': entry.key,
                     'status':
                         entry.value == 'device' ||
+                            entry.key == 'get_wireless_monitoring_status' ||
+                            entry.key == 'start_wireless_monitoring' &&
+                                monitoringAvailable &&
+                                monitoringState != 'running' ||
+                            entry.key == 'stop_wireless_monitoring' &&
+                                monitoringState == 'running' ||
                             (v07 && entry.value == 'packet_analysis') ||
                             (v07 &&
                                 sourceConnected &&
@@ -162,6 +214,9 @@ class _DashboardConnection extends Connection {
                         ? 'DEGRADED'
                         : 'UNAVAILABLE',
                     'domain': entry.value,
+                    if (entry.key == 'start_wireless_monitoring' &&
+                        !monitoringAvailable)
+                      'reason': '需要与管理热点独立的无线电。',
                   },
               ],
             };
@@ -172,6 +227,8 @@ class _DashboardConnection extends Connection {
               'os': 'Ubuntu',
               'kernel': 'test-kernel',
             };
+          case 'get_wireless_monitoring_status':
+            data = monitoring;
           case 'get_access_points':
             data =
                 accessPointsReply ??
@@ -365,10 +422,15 @@ void main() {
       expect(find.textContaining('WPA3'), findsWidgets);
       expect(calls, contains('get_ap_details'));
       await tester.scrollUntilVisible(
-        find.text('扫描报告未写入 Kismet'),
+        find.text('技术详情'),
         220,
         scrollable: find.byType(Scrollable).first,
       );
+      await tester.tap(find.text('技术详情'));
+      await tester.pumpAndSettle();
+      expect(find.text('扫描报告未写入 Kismet'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       await tester.binding.handlePopRoute();
@@ -469,7 +531,7 @@ void main() {
   );
 
   testWidgets(
-    'a network opens its distinct BSSIDs and a single AP observation history',
+    'T9: SSID and AP drilldown keeps evidence in technical details; AI draft targets the selected BSSID',
     (tester) async {
       await _phoneLayout(tester);
       const first = '02:00:00:00:00:02';
@@ -518,6 +580,19 @@ void main() {
         }
         ..apDetailsReply = {
           'access_point': ap,
+          'activity_summary': {
+            'observation_count': 2,
+            'event_count': 1,
+            'channel_change_count': 1,
+            'security_change_count': 0,
+          },
+          'related_events': [
+            {
+              'type': 'fixture-kind',
+              'message': 'INTERNAL-EVENT-FIXTURE',
+              'evidence_id': 'event-fixture',
+            },
+          ],
           'observations': [
             {
               'timestamp': start,
@@ -556,15 +631,33 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('观测历史'), findsOneWidget);
       expect(calls.where((name) => name == 'get_ap_details'), hasLength(1));
+      expect(find.text('网络活动'), findsOneWidget);
+      expect(find.textContaining('INTERNAL-EVENT-FIXTURE'), findsNothing);
       await tester.scrollUntilVisible(
-        find.textContaining('Monitor Mode · -77 dBm'),
+        find.text('技术详情'),
         160,
         scrollable: find.byType(Scrollable).first,
       );
+      expect(find.text('关联证据'), findsNothing);
+      await tester.tap(find.text('技术详情'));
+      await tester.pumpAndSettle();
+      expect(find.text('关联证据'), findsOneWidget);
+      expect(find.textContaining('INTERNAL-EVENT-FIXTURE'), findsOneWidget);
       expect(find.textContaining('Monitor Mode · -77 dBm'), findsOneWidget);
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
-      await tester.binding.handlePopRoute();
+      await tester.scrollUntilVisible(
+        find.byTooltip('AI 分析此接入点'),
+        -200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.byTooltip('AI 分析此接入点'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        contains(first),
+      );
+      await tester.tap(_tab('无线'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('接入点'));
       await tester.tap(find.text('接入点'));
@@ -575,6 +668,59 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('信道 11'), findsOneWidget);
       expect(find.text('信道 36'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'T5 T6 T8 T11: phone confirms start and stop, shows change summary and limited radio reason',
+    (tester) async {
+      await _phoneLayout(tester);
+      final calls = <String>[];
+      final connection = _DashboardConnection(
+        calls,
+        v07: true,
+        v08: true,
+        phoneControl: true,
+      );
+      await tester.pumpWidget(
+        PiAgentApp(history: _EmptyHistory(), initialConnection: connection),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('连接设备'));
+      await tester.pumpAndSettle();
+      await tester.tap(_tab('无线'));
+      await tester.pumpAndSettle();
+      final start = find.widgetWithText(FilledButton, '开始观测');
+      expect(tester.widget<FilledButton>(start).onPressed, isNull);
+      expect(find.text('需要与管理热点独立的无线电。'), findsOneWidget);
+      connection.monitoringAvailable = true;
+      await tester.tap(find.byTooltip('刷新观测状态'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(start);
+      await tester.tap(start);
+      await tester.pumpAndSettle();
+      expect(calls, isNot(contains('POST /operator/monitoring/start')));
+      await tester.tap(find.text('确认开始'));
+      await tester.pumpAndSettle();
+      expect(
+        calls.where((e) => e == 'POST /operator/monitoring/start'),
+        hasLength(1),
+      );
+      expect(find.textContaining('已观测 3 次'), findsOneWidget);
+      final stop = find.widgetWithText(FilledButton, '停止观测');
+      await tester.ensureVisible(stop);
+      await tester.tap(stop);
+      await tester.pumpAndSettle();
+      expect(calls, isNot(contains('POST /operator/monitoring/stop')));
+      await tester.tap(find.text('确认停止'));
+      await tester.pumpAndSettle();
+      expect(
+        calls.where((e) => e == 'POST /operator/monitoring/stop'),
+        hasLength(1),
+      );
+      expect(find.text('变化摘要'), findsOneWidget);
+      expect(find.textContaining('首次观测 1 个接入点'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

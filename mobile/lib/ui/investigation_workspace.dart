@@ -256,6 +256,8 @@ const _toolTitles = {
   'get_capability_status': '核对设备能力',
   'get_access_points': '获取接入点列表',
   'get_ap_details': '核对接入点详情',
+  'get_wireless_monitoring_status': '查看持续观测进度',
+  'get_wireless_investigation': '核对接入点的观测证据',
   'get_wireless_clients': '读取无线客户端',
   'get_wifi_channels': '读取信道分布',
   'get_signal_history': '查询信号历史',
@@ -337,10 +339,7 @@ class _Turn extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 6),
-            SelectableText(
-              entry.text,
-              style: theme.textTheme.bodyMedium?.copyWith(height: 1.55),
-            ),
+            _ReportText(entry.text),
           ] else if (entry.role == 'error' && !_step(entry))
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -361,6 +360,35 @@ class _Turn extends StatelessWidget {
         const SizedBox(height: 20),
       ],
     );
+  }
+}
+
+class _ReportText extends StatelessWidget {
+  const _ReportText(this.text);
+  final String text;
+  static final _heading = RegExp(
+    r'^(?:#{1,6}\s*)?(?:\*\*)?(已确认事实|可疑现象|支持证据|尚不确定的信息|建议进一步调查)[：:]?(?:\*\*)?[：:]?$',
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final body = theme.textTheme.bodyMedium?.copyWith(height: 1.55);
+    final spans = <TextSpan>[];
+    final lines = text.split('\n');
+    if (!lines.any((line) => _heading.hasMatch(line.trim()))) {
+      return SelectableText(text, style: body);
+    }
+    for (var i = 0; i < lines.length; i++) {
+      final title = _heading.firstMatch(lines[i].trim())?.group(1);
+      spans.add(
+        TextSpan(
+          text: '${title ?? lines[i]}${i == lines.length - 1 ? '' : '\n'}',
+          style: title == null ? null : theme.textTheme.titleSmall,
+        ),
+      );
+    }
+    return SelectableText.rich(TextSpan(style: body, children: spans));
   }
 }
 

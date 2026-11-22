@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 
 from raspberry.enrollment.registry import Registry
 from raspberry.mcp_server.kismet_adapter import KismetAdapter
+from raspberry.mcp_server.monitoring_session import MonitoringSession
 from raspberry.mcp_server.server import create_app
 from raspberry.mcp_server.wireless_service import WirelessService
 
@@ -82,10 +83,11 @@ class DeviceMcpTests(unittest.TestCase):
         "bluetooth": {"get_bluetooth_devices", "get_bluetooth_device_details"},
         "wireless_discovery": {
             "scan_wireless_environment", "get_access_points", "get_ap_details",
-            "get_wireless_clients", "get_wifi_channels",
+            "get_wireless_clients", "get_wifi_channels", "get_wireless_investigation",
         },
         "wireless_monitoring": {
-            "start_wireless_monitoring", "stop_wireless_monitoring", "get_signal_history", "get_wireless_events",
+            "start_wireless_monitoring", "stop_wireless_monitoring", "get_wireless_monitoring_status",
+            "get_signal_history", "get_wireless_events",
         },
         "network_discovery": {
             "get_network_profile", "get_network_interfaces", "get_arp_neighbors", "get_routes", "discover_lan_devices",
@@ -156,7 +158,7 @@ class DeviceMcpTests(unittest.TestCase):
         self.registry, self.device_id = registry, enrollment["device_id"]
         self.radio_scan = {"status": "DEGRADED", "reason": "No operator scan yet.", "source_uuid": None,
                            "access_points": [], "observed_at": None, "truncated": False}
-        service = WirelessService(adapter, scan_reader=lambda: self.radio_scan)
+        service = self.wireless = WirelessService(adapter, scan_reader=lambda: self.radio_scan)
         app = create_app(root, self.shared_token, ["testserver"], registry.database, wireless_service=service)
         self.client = self.enterContext(TestClient(app))
         self.headers = {
@@ -205,8 +207,9 @@ class DeviceMcpTests(unittest.TestCase):
             expected[name] = ("AVAILABLE", "kismet")
         for name in self.NETWORK_DOMAINS["wireless_discovery"]:
             expected[name] = ("DEGRADED", "wireless_discovery")
-        for name in ("get_signal_history", "get_wireless_events"):
+        for name in ("get_signal_history", "get_wireless_events", "stop_wireless_monitoring"):
             expected[name] = ("DEGRADED", "wireless_monitoring")
+        expected["get_wireless_monitoring_status"] = ("AVAILABLE", "wireless_monitoring")
 
         tools = self.request("tools/list")["tools"]
         self.assertCountEqual([tool["name"] for tool in tools], expected.keys())
@@ -214,7 +217,8 @@ class DeviceMcpTests(unittest.TestCase):
         # Helper installation and the operator's replay directory belong to the local host.
         # Assert their domains here. C1/C6 cover their status with isolated files and helpers.
         host_dependent = {"get_bluetooth_devices", "get_bluetooth_device_details", "list_captures",
-                          "get_capture_metadata", "get_capture_status", "replay_capture", "stop_capture_replay"}
+                          "get_capture_metadata", "get_capture_status", "replay_capture", "stop_capture_replay",
+                          "start_wireless_monitoring"}
         self.assertEqual(set(actual), set(expected))
         for name, (status, domain) in expected.items():
             self.assertEqual(actual[name][1], domain)
@@ -224,6 +228,9 @@ class DeviceMcpTests(unittest.TestCase):
             "get_ap_details": {"ap_id": "string"}, "get_bluetooth_device_details": {"device_id": "string"},
             "get_capture_metadata": {"capture_id": "string"},
             "replay_capture": {"capture_id": "string", "confirm": "boolean"}, "stop_capture_replay": {"confirm": "boolean"},
+            "start_wireless_monitoring": {"confirm": "boolean", "interval_seconds": "integer", "duration_seconds": "integer"},
+            "stop_wireless_monitoring": {"confirm": "boolean"},
+            "get_wireless_investigation": {"ap_id": "string", "offset": "integer", "snapshot_id": "string"},
         }
         for tool in tools:
             with self.subTest(tool=tool["name"]):
@@ -232,12 +239,33 @@ class DeviceMcpTests(unittest.TestCase):
                 Draft202012Validator.check_schema(schema)
                 self.assertEqual(schema["type"], "object")
                 params = schemas.get(tool["name"], {})
-                self.assertEqual(set(schema.get("required", ())), set(params))
+                optional = {"start_wireless_monitoring": {"interval_seconds", "duration_seconds"},
+                            "get_wireless_investigation": {"offset", "snapshot_id"}}.get(tool["name"], set())
+                self.assertEqual(set(schema.get("required", ())), set(params) - optional)
                 self.assertEqual({k: v["type"] for k, v in schema["properties"].items()}, params)
-                if tool["name"] in {"replay_capture", "stop_capture_replay"}:
+                if tool["name"] in {"replay_capture", "stop_capture_replay", "start_wireless_monitoring", "stop_wireless_monitoring"}:
                     self.assertFalse(tool["annotations"]["readOnlyHint"])
                 self.assertFalse(schema["additionalProperties"])
         self.assertTrue(self.call("get_system_info", {"unexpected": 1})["isError"])
+
+    def test_t5_t6_phone_and_mcp_control_the_same_bounded_session(self):
+        self.initialize()
+        self.wireless.monitoring = MonitoringSession(lambda *_: "managed_scan", lambda *_: {"access_points": []})
+        start = "/operator/monitoring/start"
+        stop = "/operator/monitoring/stop"
+        self.assertEqual(self.client.post(start, headers=self.headers, json={}).status_code, 400)
+        started = self.client.post(start, headers=self.headers, json={"confirm": True})
+        self.assertEqual(started.status_code, 200, started.text)
+        run = started.json()
+        self.assertEqual((run["interval_seconds"], run["duration_seconds"]), (30, 600))
+        status = self.call("get_wireless_monitoring_status")["structuredContent"]
+        self.assertEqual((status["session_id"], status["state"]), (run["session_id"], "running"))
+        self.assertTrue(self.call("start_wireless_monitoring", {"confirm": True})["isError"])
+        self.assertTrue(self.call("stop_wireless_monitoring", {"confirm": False})["isError"])
+        self.assertFalse(self.call("stop_wireless_monitoring", {"confirm": True})["isError"])
+        self.wireless.monitoring.close()
+        self.assertEqual(self.client.get("/operator/monitoring/status", headers=self.headers).json()["state"], "stopped")
+        self.assertEqual(self.client.post(stop, headers=self.headers, json={"confirm": True}).status_code, 200)
 
     def test_managed_report_enables_ap_queries_only_while_source_matches(self):
         self.initialize()

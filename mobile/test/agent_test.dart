@@ -59,6 +59,7 @@ MockClient _deviceClient(
   bool reportsCapabilities = true,
   Map<String, String> statuses = const {},
   Future<Json> Function()? onCapabilities,
+  Json Function(Json arguments)? investigation,
 }) {
   const id = 'pi-session';
   const protocol = '2025-11-25';
@@ -94,6 +95,11 @@ MockClient _deviceClient(
         final name = (body['params'] as Json)['name'] as String;
         calls?.add(name);
         result = switch (name) {
+          'get_wireless_investigation' when investigation != null => {
+            'structuredContent': investigation(
+              body['params']['arguments'] as Json,
+            ),
+          },
           'get_capability_status' => {
             'structuredContent': onCapabilities == null
                 ? {
@@ -146,6 +152,102 @@ MockClient _deviceClient(
 }
 
 void main() {
+  test(
+    'T10: Agent reads every page of a fixed AP investigation as evidence',
+    () async {
+      final device = DeviceConnection();
+      addTearDown(device.dispose);
+      const bssid = '02:11:22:33:44:55';
+      const snapshot = 'snapshot-A';
+      final offsets = <int>[];
+      final mcp = _deviceClient(
+        [
+          _tool(
+            'get_wireless_investigation',
+            schema: {
+              'type': 'object',
+              'properties': {
+                'ap_id': {'type': 'string'},
+                'offset': {'type': 'integer'},
+                'snapshot_id': {'type': 'string'},
+              },
+              'required': ['ap_id'],
+              'additionalProperties': false,
+            },
+          ),
+          {
+            ..._tool('start_wireless_monitoring'),
+            'annotations': {'readOnlyHint': false},
+          },
+          {
+            ..._tool('stop_wireless_monitoring'),
+            'annotations': {'readOnlyHint': false},
+          },
+        ],
+        investigation: (args) {
+          expect(args['ap_id'], bssid);
+          final offset = (args['offset'] ?? 0) as int;
+          offsets.add(offset);
+          if (offset != 0) expect(args['snapshot_id'], snapshot);
+          return {
+            'ap_id': bssid,
+            'snapshot_id': snapshot,
+            'next_offset': offset == 0 ? 1 : null,
+            'evidence': [
+              {
+                'id': 'sample-$offset',
+                'source': 'managed_scan',
+                'timestamp': 100 + offset,
+              },
+            ],
+            'limitations': ['只覆盖本次观测'],
+          };
+        },
+      );
+      await _connect(device, mcp);
+      final cloud = MockClient((request) async {
+        final body = jsonDecode(request.body) as Json;
+        final names = (body['tools'] as List).map((t) => t['function']['name']);
+        expect(names, isNot(contains('start_wireless_monitoring')));
+        expect(names, isNot(contains('stop_wireless_monitoring')));
+        final messages = body['messages'] as List;
+        expect(messages.first['content'], contains('尚不确定的信息'));
+        final pages = messages
+            .where((m) => m['role'] == 'tool')
+            .map((m) => jsonDecode(m['content'] as String) as Json)
+            .toList();
+        if (pages.isEmpty || pages.last['next_offset'] != null) {
+          return _json(
+            _reply({
+              'tool_calls': [
+                _call('get_wireless_investigation', {
+                  'ap_id': bssid,
+                  if (pages.isNotEmpty) ...{
+                    'offset': pages.last['next_offset'],
+                    'snapshot_id': pages.last['snapshot_id'],
+                  },
+                }),
+              ],
+            }),
+          );
+        }
+        expect(pages.map((p) => p['evidence'][0]['id']), [
+          'sample-0',
+          'sample-1',
+        ]);
+        expect(pages.last['limitations'], contains('只覆盖本次观测'));
+        return _json(_reply({'content': '已确认事实\n有两条普通扫描记录。'}));
+      });
+      addTearDown(cloud.close);
+      final answer = await Agent(
+        device.session,
+        _llm(cloud),
+      ).run('调查 $bssid', onEvent: (_) {});
+      expect(answer, contains('两条'));
+      expect(offsets, [0, 1]);
+    },
+  );
+
   test(
     'C8: model sees available read tools and cannot start scans or replay',
     () async {

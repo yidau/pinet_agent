@@ -1,5 +1,6 @@
 """Handset control of the two fixed, bounded systemd radio jobs."""
 
+import os
 import re
 import socket
 import subprocess
@@ -10,6 +11,7 @@ from pathlib import Path
 
 SOCKET = "/run/piagent-phone-radio.sock"
 WIFI = "piagent-managed-scan@shared-ap.service"
+SESSION_WIFI = "piagent-managed-scan@monitoring.service"
 BLUETOOTH = "piagent-bluetooth-scan.service"
 ACTIONS = {
     "wifi-scan": ("start", WIFI),
@@ -34,10 +36,10 @@ class RadioError(Exception):
         super().__init__(message)
 
 
-def _systemctl(*args):
+def _systemctl(*args, timeout=4):
     return subprocess.run(
         ["/usr/bin/systemctl", "--system", "--no-pager", "--no-ask-password", *args],
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=4, check=False,
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout, check=False,
     )
 
 
@@ -139,21 +141,43 @@ def radio_status():
             "bluetooth": _bluetooth_status(units.get(BLUETOOTH, {}))}
 
 
-def radio_action(action):
-    if action not in ACTIONS:
-        raise RadioError("未知的无线操作。", 400)
-    if action == "bluetooth-start" and BT_CONFLICT.exists():
-        raise RadioError("设备已标记蓝牙发现与校时冲突。", 409)
+def _broker_request(action):
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(6)
             client.connect(SOCKET)
             client.sendall(action.encode("ascii") + b"\n")
             with client.makefile("rb") as stream:
-                response = stream.readline(128)
+                return stream.readline(128)
     except (OSError, AttributeError) as exc:
         raise RadioError("手机无线控制服务不可用。") from exc
-    if response != b"OK\n":
+
+
+def session_radio(action, invocation=None):
+    if action not in ("session-check", "session-scan", "session-stop"):
+        raise ValueError("Unknown session radio action")
+    if action == "session-stop" and not re.fullmatch(r"[0-9a-f]{32}", invocation or ""):
+        raise ValueError("Missing session scan invocation")
+    reply = _broker_request(action + " " + invocation if action == "session-stop" else action)
+    if reply == b"SHARED\n":
+        raise RadioError("扫描接口与管理热点共用无线电。持续普通扫描需要单独的无线电。", 409)
+    if reply == b"BUSY\n":
+        raise RadioError("扫描助手仍有未结束的观测任务。", 409)
+    if action == "session-scan":
+        matched = re.fullmatch(rb"OK ([0-9a-f]{32})\n", reply)
+        if matched:
+            return matched[1].decode("ascii")
+        raise RadioError("扫描助手未能确认本轮任务标识。")
+    if reply != b"OK\n":
+        raise RadioError("无法确认独立扫描接口可用，请检查无线硬件和扫描助手版本。")
+
+
+def radio_action(action):
+    if action not in ACTIONS:
+        raise RadioError("未知的无线操作。", 400)
+    if action == "bluetooth-start" and BT_CONFLICT.exists():
+        raise RadioError("设备已标记蓝牙发现与校时冲突。", 409)
+    if _broker_request(action) != b"OK\n":
         raise RadioError("无线服务未接受本次操作。")
     status = radio_status()
     # --no-block acknowledges the queued job. Its Activation timestamp and
@@ -167,9 +191,84 @@ def radio_action(action):
     return status
 
 
+def _interface_phy(config, field):
+    with open(config, encoding="utf-8") as settings:
+        names = [line[len(field):].strip() for line in settings if line.startswith(field)]
+    if len(names) != 1 or re.fullmatch(r"[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,14}", names[0]) is None:
+        raise ValueError("Invalid wireless interface configuration")
+    return (Path("/sys/class/net") / names[0] / "phy80211").resolve(strict=True)
+
+
+def _session_unit():
+    result = _systemctl("show", "--all", "--property=LoadState,ActiveState,Job,InvocationID", SESSION_WIFI, timeout=1)
+    props = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if result.returncode or props.get("LoadState") != "loaded" or not {"ActiveState", "Job", "InvocationID"} <= props.keys():
+        raise ValueError("Incomplete monitoring unit state")
+    return props
+
+
+def _session_job(stop_id):
+    before = _session_unit()
+    idle = before["ActiveState"] in ("inactive", "failed") and before["Job"] in ("", "0")
+    if stop_id is not None:
+        if before["InvocationID"] != stop_id or before["ActiveState"] in ("inactive", "failed", "deactivating"):
+            return b"OK\n"  # That run ended already. A newer invocation owns its own stop.
+        if before["ActiveState"] not in ("active", "activating", "reloading"):
+            return b"FAILED\n"
+        return b"OK\n" if _systemctl("stop", SESSION_WIFI).returncode == 0 else b"FAILED\n"
+    if not idle:
+        return b"BUSY\n"
+    if _systemctl("--no-block", "start", SESSION_WIFI, timeout=1).returncode:
+        return b"FAILED\n"
+    until = time.monotonic() + 1.5
+    while time.monotonic() < until:
+        current = _session_unit()["InvocationID"]
+        if (current != before["InvocationID"] and re.fullmatch(r"[0-9a-f]{32}", current)
+                and current != "0" * 32):
+            return f"OK {current}\n".encode("ascii")
+        time.sleep(.05)
+    return b"FAILED\n"  # No ownership proof. Leave the bounded job to systemd.
+
+
+def _serialized_session_job(stop_id):
+    import fcntl
+    # Socket activation creates a separate broker process for each request.
+    # The fixed, root-owned helper directory is common to all of them.
+    fd = os.open("/usr/lib/piagent-managed-scan", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        until = time.monotonic() + .45
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= until:
+                    return b"BUSY\n"
+                time.sleep(.03)
+        return _session_job(stop_id)
+    finally:
+        os.close(fd)
+
+
 def _serve_one(source, output):
     """Handle one systemd-accepted Unix socket. The peer never supplies a unit or options."""
-    request = source.readline(32)
+    request = source.readline(64)
+    stop = re.fullmatch(rb"session-stop ([0-9a-f]{32})\n", request)
+    if request in (b"session-check\n", b"session-scan\n") or stop:
+        try:
+            if stop:
+                reply = _serialized_session_job(stop[1].decode("ascii"))
+            else:
+                scan = _interface_phy("/etc/piagent-kismet/managed-scan.env", "PIAGENT_SCAN_INTERFACE=")
+                ap = _interface_phy("/etc/hostapd/piagent.conf", "interface=")
+                if scan == ap:
+                    output.write(b"SHARED\n")
+                    return
+                reply = b"OK\n" if request == b"session-check\n" else _serialized_session_job(None)
+            output.write(reply)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            output.write(b"FAILED\n")
+        return
     command = next((command for action, command in ACTIONS.items()
                     if request == action.encode("ascii") + b"\n"), None)
     if command is None:

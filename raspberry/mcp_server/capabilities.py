@@ -26,6 +26,9 @@ NETWORK_TOOLS = {
                              "Each hidden SSID is grouped separately by BSSID. Counts cover the returned view.",
         "get_ap_details": "Read the selected BSSID's radio metadata and bounded timestamped observation history, "
                           "including the source of each sample. Accepts an AP id or BSSID from get_access_points.",
+        "get_wireless_investigation": "Investigate one BSSID using recorded observations, linked events and stable "
+                                      "evidence IDs. Read the first page with ap_id; continue using its snapshot_id "
+                                      "and next_offset until null. Check limitations before drawing conclusions.",
         "get_wireless_clients": "List wirelessly observed clients.",
         "get_wifi_channels": "Summarize observed wireless channels.",
     },
@@ -34,8 +37,11 @@ NETWORK_TOOLS = {
         "get_bluetooth_device_details": "Read a Bluetooth observation by its returned device id.",
     },
     "wireless_monitoring": {
-        "start_wireless_monitoring": "Start a wireless observation session.",
-        "stop_wireless_monitoring": "Stop a wireless observation session.",
+        "start_wireless_monitoring": "Start one bounded observation on the Raspberry Pi with enrolled operator "
+                                     "confirmation. Defaults to 30-second intervals for 10 minutes.",
+        "get_wireless_monitoring_status": "Read Pi-managed session state, source, elapsed time, scan count, "
+                                          "unique and newly observed BSSIDs, and change summary.",
+        "stop_wireless_monitoring": "Stop the current Pi-managed observation session with enrolled operator confirmation.",
         "get_signal_history": "Read recorded wireless signal measurements over time.",
         "get_wireless_events": "List events observed during wireless monitoring.",
     },

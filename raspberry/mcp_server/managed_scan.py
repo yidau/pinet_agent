@@ -98,19 +98,28 @@ def record_managed_history(source_uuid, points):
 
 
 def read_managed_history(source_uuid, bssid):
+    return read_managed_histories(source_uuid, [bssid]).get(bssid, [])
+
+
+def read_managed_histories(source_uuid, bssids):
+    """Read bounded AP histories from a single consistent journal snapshot."""
     path = STATE.with_name("observations.sqlite3")
-    if not source_uuid:
-        return []
+    if not source_uuid or not bssids:
+        return {}
+    result = {}
     try:
         with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=1)) as db:
-            rows = db.execute("""SELECT timestamp, rssi_dbm, channel FROM samples
-                                 WHERE source_uuid=? AND bssid=? ORDER BY timestamp DESC LIMIT 64""",
-                              (source_uuid, bssid))
-            return [{"timestamp": ts, "rssi_dbm": rssi, "channel": ch, "observation_source": "managed_scan"}
-                    for ts, rssi, ch in rows]
+            db.execute("BEGIN")
+            for bssid in bssids:
+                rows = db.execute("""SELECT timestamp, rssi_dbm, channel FROM samples
+                                     WHERE source_uuid=? AND bssid=? ORDER BY timestamp DESC LIMIT 64""",
+                                  (source_uuid, bssid))
+                result[bssid] = [{"timestamp": ts, "rssi_dbm": rssi, "channel": ch, "observation_source": "managed_scan"}
+                                 for ts, rssi, ch in rows]
+        return result
     except (OSError, sqlite3.Error):
         # Older helpers may have no journal. The service still has its measured session samples.
-        return []
+        return {}
 
 
 def wifi_channel(freq):
@@ -200,7 +209,30 @@ class ScanUnavailable(Exception):
     """The current radio or local authorization cannot perform this scan."""
 
 
-def collect(interface, allow_shared_ap):
+def known_interface_radio(interface):
+    kind = interface.get_attr("NL80211_ATTR_IFTYPE")
+    phy = interface.get_attr("NL80211_ATTR_WIPHY")
+    # The kernel's IFTYPE_UNSPECIFIED is zero. An unrecognized type may be
+    # hosting an AP as far as the session preflight is concerned.
+    return type(kind) is int and 1 <= kind <= 12 and type(phy) is int and 0 <= phy < 0xffffffff
+
+
+def check_scan_radio(interfaces, ifindex, allow_shared_ap, require_known_topology):
+    selected = next((i for i in interfaces if i.get_attr("NL80211_ATTR_IFINDEX") == ifindex), None)
+    if selected is None or selected.get_attr("NL80211_ATTR_WIPHY") is None:
+        raise ScanUnavailable("The selected interface has no identifiable Wi-Fi radio.")
+    if require_known_topology and not all(known_interface_radio(i) for i in interfaces):
+        raise ScanUnavailable("Cannot verify radio ownership of all wireless interfaces for continuous scanning.")
+    ap_roles = (3, 4, 9) if require_known_topology else (3, 4)
+    shares_ap = any(i.get_attr("NL80211_ATTR_IFTYPE") in ap_roles and
+                    i.get_attr("NL80211_ATTR_WIPHY") == selected.get_attr("NL80211_ATTR_WIPHY") for i in interfaces)
+    if shares_ap and not allow_shared_ap:
+        raise ScanUnavailable("This radio hosts an AP. Shared-radio scanning needs explicit operator confirmation.")
+    if selected.get_attr("NL80211_ATTR_IFTYPE") not in (2, 3):
+        raise ScanUnavailable("The current interface mode does not support this managed scan.")
+
+
+def collect(interface, allow_shared_ap, *, require_known_topology=False):
     try:
         from pyroute2 import IW
         from pyroute2.netlink.exceptions import NetlinkError
@@ -209,18 +241,7 @@ def collect(interface, allow_shared_ap):
     try:
         ifindex = socket.if_nametoindex(interface)
         with IW() as radio:
-            interfaces = list(radio.list_dev())
-            selected = next((i for i in interfaces if i.get_attr("NL80211_ATTR_IFINDEX") == ifindex), None)
-            if selected is None or selected.get_attr("NL80211_ATTR_WIPHY") is None:
-                raise ScanUnavailable("The selected interface has no identifiable Wi-Fi radio.")
-            mode = selected.get_attr("NL80211_ATTR_IFTYPE")
-            shares_ap = any(i.get_attr("NL80211_ATTR_IFTYPE") in (3, 4) and
-                            i.get_attr("NL80211_ATTR_WIPHY") == selected.get_attr("NL80211_ATTR_WIPHY")
-                            for i in interfaces)
-            if shares_ap and not allow_shared_ap:
-                raise ScanUnavailable("This radio hosts an AP. Shared-radio scanning needs explicit operator confirmation.")
-            if mode not in (2, 3):
-                raise ScanUnavailable("The current interface mode does not support this managed scan.")
+            check_scan_radio(list(radio.list_dev()), ifindex, allow_shared_ap, require_known_topology)
             start = time.monotonic()
             points = {}
             earlier = []
@@ -268,7 +289,11 @@ def run(mode):
             publish({**empty_state("The operator suspended managed scanning to preserve radio coexistence."),
                      "source_uuid": source_uuid})
             return 0
-        result = {**empty_state("A local scan is in progress."), "in_progress": True, "source_uuid": source_uuid}
+        scan_id = os.environ.get("INVOCATION_ID", "") if mode == "monitoring" else uuid.uuid4().hex
+        if not re.fullmatch("[0-9a-f]{32}", scan_id):
+            raise SystemExit("Monitoring scan requires a systemd invocation ID.")
+        result = {**empty_state("A local scan is in progress."), "in_progress": True, "source_uuid": source_uuid,
+                  "scan_mode": mode, "scan_id": scan_id}
         publish(result)
         def interrupted(signum, frame):
             raise ScanUnavailable("Managed scan timed out or was stopped by the operator.")
@@ -278,7 +303,7 @@ def run(mode):
         try:
             interface = os.environ["PIAGENT_SCAN_INTERFACE"]
             adapter = KismetAdapter(os.environ["PIAGENT_SCAN_URL"], os.environ["PIAGENT_SCAN_KEY"])
-            points, earlier, truncated = collect(interface, mode == "shared-ap")
+            points, earlier, truncated = collect(interface, mode == "shared-ap", require_known_topology=mode == "monitoring")
             reports = kismet_reports(points)
             adapter.submit_scan_report(source_uuid, f"PiAgent Managed Scan ({interface})", reports)
             reported = {row["bssid"] for row in reports}
@@ -310,5 +335,5 @@ def run(mode):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("normal", "shared-ap", "hold"))
+    parser.add_argument("mode", choices=("normal", "shared-ap", "hold", "monitoring"))
     raise SystemExit(run(parser.parse_args().mode))

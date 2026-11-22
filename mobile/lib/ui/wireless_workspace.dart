@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../mcp/device_connection.dart';
@@ -5,6 +7,7 @@ import '../mcp/device_panel.dart' show capabilityStatusLabel;
 import '../mcp/tool_registry.dart';
 import '../network.dart';
 import 'console_style.dart';
+import 'monitoring_panel.dart';
 import 'phone_controls.dart';
 import 'wifi_networks.dart';
 import 'workspace_data.dart';
@@ -93,9 +96,11 @@ class WirelessWorkspace extends StatefulWidget {
     super.key,
     required this.session,
     required this.observations,
+    this.onInvestigate,
   });
   final DeviceSession? session;
   final Map<String, Json> observations;
+  final ValueChanged<String>? onInvestigate;
 
   @override
   State<WirelessWorkspace> createState() => _WirelessWorkspaceState();
@@ -179,6 +184,9 @@ class _WirelessWorkspaceState extends State<WirelessWorkspace> {
       for (final row in rows ?? const <Json>[]) _source(row, report?['source']),
     };
     final hasOperator = widget.session?.registry.phoneControl == true;
+    final bssids = wifi?.byBssid.values;
+    final session = widget.session;
+    final monitoring = session?.registry['get_wireless_monitoring_status'];
     final items = <Widget>[
       SegmentedButton<_Area>(
         expandedInsets: EdgeInsets.zero,
@@ -190,6 +198,33 @@ class _WirelessWorkspaceState extends State<WirelessWorkspace> {
         showSelectedIcon: false,
         onSelectionChanged: (value) => setState(() => _area = value.single),
       ),
+      if (_area == _Area.aps) ...[
+        const SizedBox(height: 12),
+        _WirelessOverview(
+          networks: wifi?.groups(null).length,
+          aps: bssids?.length,
+          channels: bssids?.map(wifiChannel).whereType<String>().toSet().length,
+          truncated: report?['truncated'] == true,
+          status: session == null
+              ? '设备未连接'
+              : report != null
+              ? '已有观测'
+              : data.reason('get_access_points'),
+          onInvestigate: widget.onInvestigate == null || session == null
+              ? null
+              : () => widget.onInvestigate!('根据当前无线环境和最近的持续观测，调查有哪些有证据支持的变化。'),
+        ),
+        if (session != null && monitoring?.isCallable == true) ...[
+          const SizedBox(height: 8),
+          MonitoringPanel(key: ObjectKey(session), session: session),
+        ] else if (session != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            '持续观测 · ${data.reason('get_wireless_monitoring_status')}',
+            style: theme.textTheme.bodySmall,
+          ),
+        ],
+      ],
       const SizedBox(height: 12),
       ConsoleCard(
         padding: EdgeInsets.zero,
@@ -252,11 +287,6 @@ class _WirelessWorkspaceState extends State<WirelessWorkspace> {
                 ),
               ),
       ),
-      if (wifi != null)
-        Text(
-          '${groups.length} 个网络 · ${visible!.length} 个 BSSID · ${channels.length} 个已知信道',
-          style: theme.textTheme.bodySmall,
-        ),
       if (time != null) Text('读取于 $time', style: theme.textTheme.bodySmall),
       if (_area == _Area.aps && bands.isNotEmpty)
         Padding(
@@ -325,7 +355,13 @@ class _WirelessWorkspaceState extends State<WirelessWorkspace> {
             padding: const EdgeInsets.only(bottom: 6),
             child: _NetworkTile(
               group: group,
-              onTap: () => _openNetwork(context, group, data, report!),
+              onTap: () => _openNetwork(
+                context,
+                group,
+                data,
+                report!,
+                widget.onInvestigate,
+              ),
             ),
           );
         }
@@ -339,7 +375,8 @@ class _WirelessWorkspaceState extends State<WirelessWorkspace> {
                 title: Text('信道 $channel'),
                 subtitle: Text('${aps.length} 个 BSSID'),
                 children: [
-                  for (final ap in aps) _apTile(context, ap, data, report!),
+                  for (final ap in aps)
+                    _apTile(context, ap, data, report!, widget.onInvestigate),
                 ],
               ),
             ),
@@ -353,7 +390,8 @@ class _WirelessWorkspaceState extends State<WirelessWorkspace> {
             row: row,
             source: _source(row, report?['source']),
             onTap: _area == _Area.aps
-                ? () => _openAp(context, row, data, report!)
+                ? () =>
+                      _openAp(context, row, data, report!, widget.onInvestigate)
                 : null,
           ),
         );
@@ -362,11 +400,22 @@ class _WirelessWorkspaceState extends State<WirelessWorkspace> {
   }
 }
 
-void _openAp(BuildContext context, Json ap, WorkspaceData data, Json report) {
+void _openAp(
+  BuildContext context,
+  Json ap,
+  WorkspaceData data,
+  Json report,
+  ValueChanged<String>? onInvestigate,
+) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(
-      builder: (_) =>
-          _ApPage(row: ap, session: data.session!, view: data, report: report),
+      builder: (_) => _ApPage(
+        row: ap,
+        session: data.session!,
+        view: data,
+        report: report,
+        onInvestigate: onInvestigate,
+      ),
     ),
   );
 }
@@ -376,11 +425,12 @@ Widget _apTile(
   Json ap,
   WorkspaceData data,
   Json report,
+  ValueChanged<String>? onInvestigate,
 ) => _ObservationTile(
   area: _Area.aps,
   row: ap,
   source: _source(ap, report['source']),
-  onTap: () => _openAp(context, ap, data, report),
+  onTap: () => _openAp(context, ap, data, report, onInvestigate),
 );
 
 void _openNetwork(
@@ -388,6 +438,7 @@ void _openNetwork(
   WifiNetwork group,
   WorkspaceData data,
   Json report,
+  ValueChanged<String>? onInvestigate,
 ) {
   Navigator.of(context).push(
     MaterialPageRoute<void>(
@@ -399,11 +450,78 @@ void _openNetwork(
           separatorBuilder: (_, _) => const SizedBox(height: 8),
           itemBuilder: (_, index) => index == 0
               ? const ConsoleHeading('接入点')
-              : _apTile(pageContext, group.aps[index - 1], data, report),
+              : _apTile(
+                  pageContext,
+                  group.aps[index - 1],
+                  data,
+                  report,
+                  onInvestigate,
+                ),
         ),
       ),
     ),
   );
+}
+
+class _WirelessOverview extends StatelessWidget {
+  const _WirelessOverview({
+    required this.networks,
+    required this.aps,
+    required this.channels,
+    required this.truncated,
+    required this.status,
+    required this.onInvestigate,
+  });
+  final int? networks, aps, channels;
+  final bool truncated;
+  final String status;
+  final VoidCallback? onInvestigate;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ConsoleCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ConsoleHeading(
+            '无线环境',
+            trailing: IconButton(
+              tooltip: 'AI 分析无线环境',
+              onPressed: onInvestigate,
+              icon: Icon(
+                Icons.auto_awesome,
+                color: onInvestigate == null ? null : theme.colorScheme.primary,
+              ),
+            ),
+          ),
+          Text(status, style: theme.textTheme.bodySmall),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 24,
+            runSpacing: 8,
+            children: [
+              for (final (name, value) in [
+                ('SSID 网络', networks),
+                ('唯一 BSSID', aps),
+                ('已知信道', channels),
+              ])
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      value == null ? '—' : '${truncated ? '≥' : ''}$value',
+                      style: theme.textTheme.titleLarge,
+                    ),
+                    Text(name, style: theme.textTheme.labelMedium),
+                  ],
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _NetworkTile extends StatelessWidget {
@@ -730,13 +848,14 @@ class _EventRow extends StatelessWidget {
   final Json event;
   @override
   Widget build(BuildContext context) => ListTile(
-    leading: Icon(
-      Icons.notifications_outlined,
-      color: ConsoleColors.warningOf(context),
-    ),
+    leading: const Icon(Icons.timeline_outlined),
     title: Text(_text(event['type']) ?? '无线事件'),
     subtitle: Text(
-      [?_text(event['message']), ?_when(event['timestamp'])].join('\n'),
+      [
+        ?_text(event['message']),
+        ?_when(event['timestamp']),
+        ?_text(event['evidence_id']),
+      ].join('\n'),
     ),
   );
 }
@@ -747,10 +866,12 @@ class _ApPage extends StatefulWidget {
     required this.session,
     required this.view,
     required this.report,
+    required this.onInvestigate,
   });
   final Json row, report;
   final DeviceSession session;
   final WorkspaceData view;
+  final ValueChanged<String>? onInvestigate;
   @override
   State<_ApPage> createState() => _ApPageState();
 }
@@ -822,38 +943,52 @@ class _ApPageState extends State<_ApPage> {
               (p) => p['rssi_dbm'] is num && (p['rssi_dbm'] as num).isFinite,
             )
             .toList();
-        final events = [
-          for (final e
-              in view.rows('get_wireless_events', 'events') ?? const <Json>[])
-            if (exact(e['bssid']) ||
-                exact(e['ap_bssid']) ||
-                exact(e['ap_id']) ||
-                exact(e['device_id']) ||
-                (e['device_macs'] is List &&
-                    (e['device_macs'] as List).any(exact)))
-              e,
-        ];
+        final linkedEvents = payload?['related_events'];
+        final events = linkedEvents is List
+            ? linkedEvents.whereType<Json>().toList()
+            : [
+                for (final e
+                    in view.rows('get_wireless_events', 'events') ??
+                        const <Json>[])
+                  if (exact(e['bssid']) ||
+                      exact(e['ap_bssid']) ||
+                      exact(e['ap_id']) ||
+                      exact(e['device_id']) ||
+                      (e['device_macs'] is List &&
+                          (e['device_macs'] as List).any(exact)))
+                    e,
+              ];
+        final summary = payload?['activity_summary'];
+        final counts = summary is Json ? summary : const <String, dynamic>{};
+        final limitations = counts['limitations'];
         final pairs = <(String, String)>[
           ('BSSID', mac ?? '未报告'),
           ('信道', channel ?? '未报告'),
-          ('频率', frequency == null ? '未报告' : '$frequency MHz'),
           ('认证', _security(row)),
-          if (_text(row['security']) case final String raw) ('安全配置', raw),
           ('信号强度', row['rssi_dbm'] is num ? '${row['rssi_dbm']} dBm' : '未报告'),
           ('观测来源', _source(row, payload?['source'] ?? widget.report['source'])),
-          if (relatedAddresses.isNotEmpty)
-            ('Kismet 关联 BSSID', relatedAddresses.join('\n')),
-          ('首次观测', _when(row['first_seen']) ?? '数据源未提供'),
           ('最近观测', time ?? '数据源未提供'),
-          if (reportTime != null) ('读取时间', reportTime),
         ];
         final theme = Theme.of(context);
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
           children: [
-            Semantics(
-              header: true,
-              child: Text(_name(row), style: theme.textTheme.headlineSmall),
+            ConsoleHeading(
+              _name(row),
+              trailing: IconButton(
+                tooltip: 'AI 分析此接入点',
+                icon: const Icon(Icons.auto_awesome),
+                onPressed:
+                    !active || widget.onInvestigate == null || mac == null
+                    ? null
+                    : () {
+                        Navigator.of(context)
+                            .popUntil((route) => route.isFirst);
+                        widget.onInvestigate!(
+                          '请调查接入点 $mac 的无线观测、历史变化和相关事件，并说明证据与不确定之处。',
+                        );
+                      },
+              ),
             ),
             const SizedBox(height: 12),
             if (!active) const Text('设备已断开，以下为上次读取的数据。'),
@@ -885,6 +1020,27 @@ class _ApPageState extends State<_ApPage> {
               ),
             ),
             const SizedBox(height: 16),
+            const ConsoleHeading('网络活动'),
+            ConsoleCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    records.isEmpty && counts['observation_count'] == null
+                        ? '尚未取得该接入点的历史观测。'
+                        : '本次可查看 ${counts['observation_count'] ?? records.length} 条观测记录。',
+                  ),
+                  if (counts['channel_change_count'] case final int changes)
+                    Text('信道发生 $changes 次变化。'),
+                  if (counts['security_change_count'] case final int changes)
+                    Text('安全配置发生 $changes 次变化。'),
+                  if ((counts['event_count'] ?? events.length) case final int n
+                      when n > 0)
+                    Text('有 $n 条关联活动，可在技术详情中查看。'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             const ConsoleHeading('信号历史'),
             ConsoleCard(
               child: samples.isEmpty
@@ -892,77 +1048,177 @@ class _ApPageState extends State<_ApPage> {
                   : _History(points: samples),
             ),
             const SizedBox(height: 16),
-            ConsoleHeading('观测记录', trailing: Text('${records.length} 条')),
-            ConsoleCard(
-              padding: EdgeInsets.zero,
-              child: records.isEmpty
-                  ? const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text('设备尚未提供带时间的观测。'),
-                    )
-                  : Column(
+            OutlinedButton.icon(
+              icon: const Icon(Icons.data_object),
+              label: const Text('技术详情'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => Scaffold(
+                    appBar: AppBar(title: const Text('技术详情')),
+                    body: ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                       children: [
-                        for (final record in records.reversed.take(3))
-                          _HistoryRow(record: record),
-                        if (records.length > 3)
-                          TextButton(
-                            onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => Scaffold(
-                                  appBar: AppBar(title: Text(mac ?? '观测记录')),
-                                  body: ListView.builder(
-                                    itemCount: records.length,
-                                    itemBuilder: (_, i) => _HistoryRow(
-                                      record: records[records.length - 1 - i],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            child: Text('查看全部 ${records.length} 条记录'),
+                        ConsoleHeading(mac ?? _name(row)),
+                        if (frequency != null) Text('频率 $frequency MHz'),
+                        if (_text(row['security']) case final String raw)
+                          Text('安全配置 $raw'),
+                        if (_when(row['first_seen']) case final String first)
+                          Text('首次观测 $first'),
+                        if (reportTime != null) Text('读取时间 $reportTime'),
+                        if (relatedAddresses.isNotEmpty)
+                          Text(
+                            'Kismet 关联 BSSID · ${relatedAddresses.join('、')}',
                           ),
+                        if (row['kismet_reported'] == false)
+                          const Text('扫描报告未写入 Kismet'),
+                        const SizedBox(height: 16),
+                        const ConsoleHeading('关联证据'),
+                        if (limitations is List)
+                          for (final text in limitations.whereType<String>())
+                            Text(text),
+                        if (active &&
+                            identifier != null &&
+                            widget
+                                    .session
+                                    .registry['get_wireless_investigation']
+                                    ?.isCallable ==
+                                true)
+                          _EvidencePages(
+                            session: widget.session,
+                            apId: identifier,
+                          )
+                        else
+                          const Text('数据来自设备的接入点详情与无线观测。'),
+                        const SizedBox(height: 16),
+                        ConsoleHeading(
+                          '相关事件',
+                          trailing: Text('${events.length} 条'),
+                        ),
+                        if (events.isEmpty)
+                          Text(
+                            _emptyReason(
+                              view,
+                              'get_wireless_events',
+                              '当前没有与此接入点匹配的事件。',
+                            ),
+                          ),
+                        for (final event in events) _EventRow(event: event),
+                        const SizedBox(height: 16),
+                        ConsoleHeading(
+                          '观测记录',
+                          trailing: Text('${records.length} 条'),
+                        ),
+                        if (records.isEmpty) const Text('设备尚未提供带时间的观测。'),
+                        for (final record in records.reversed)
+                          _HistoryRow(record: record),
                       ],
                     ),
-            ),
-            const SizedBox(height: 16),
-            const ConsoleHeading('相关事件'),
-            ConsoleCard(
-              child: events.isEmpty
-                  ? Text(
-                      _emptyReason(
-                        view,
-                        'get_wireless_events',
-                        '当前事件中没有标明此接入点的记录。',
-                      ),
-                    )
-                  : Column(
-                      children: [for (final e in events) _EventRow(event: e)],
-                    ),
-            ),
-            const SizedBox(height: 16),
-            const ConsoleHeading('关联证据'),
-            ConsoleCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('接入点列表 · get_access_points'),
-                  if (fresh is Json) const Text('设备详情 · get_ap_details'),
-                  if (serverHistory is List)
-                    const Text('观测历史 · get_ap_details'),
-                  if (serverHistory is! List &&
-                      records.any((r) => r['_legacy_signal'] == true))
-                    const Text('监听采样 · get_signal_history'),
-                  if (events.isNotEmpty)
-                    const Text('无线事件 · get_wireless_events'),
-                  if (row['kismet_reported'] == false)
-                    const Text('扫描报告未写入 Kismet'),
-                ],
+                  ),
+                ),
               ),
             ),
           ],
         );
       },
     ),
+  );
+}
+
+class _EvidencePages extends StatefulWidget {
+  const _EvidencePages({required this.session, required this.apId});
+  final DeviceSession session;
+  final String apId;
+  @override
+  State<_EvidencePages> createState() => _EvidencePagesState();
+}
+
+class _EvidencePagesState extends State<_EvidencePages> {
+  final _records = <Json>[];
+  final _limits = <String>{};
+  String? _snapshot;
+  int? _next = 0;
+  bool _loading = false;
+  String? _error;
+
+  Future<void> _read() async {
+    final offset = _next;
+    if (offset == null || _loading) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.session.callTool(
+        'get_wireless_investigation',
+        {
+          'ap_id': widget.apId,
+          'offset': offset,
+          if (_snapshot != null) 'snapshot_id': _snapshot,
+        },
+      );
+      if (!mounted) return;
+      if (result['ok'] == false) {
+        if (result['error_code'] == 'EVIDENCE_SNAPSHOT_EXPIRED') {
+          _snapshot = null;
+          _next = 0;
+          _records.clear();
+          _limits.clear();
+        }
+        throw FormatException(displayText(result['message']) ?? '证据读取失败。');
+      }
+      final data = result['data'] is Json ? result['data'] as Json : result;
+      final evidence = data['evidence'], next = data['next_offset'];
+      if (evidence is! List ||
+          next != null && (next is! int || next <= offset)) {
+        throw const FormatException('设备返回的证据页格式无效。');
+      }
+      setState(() {
+        _records.addAll(evidence.whereType<Json>());
+        _snapshot = displayText(data['snapshot_id']);
+        if (data['limitations'] case final List limits) {
+          _limits.addAll(limits.whereType<String>());
+        }
+        _next = next as int?;
+      });
+    } on FormatException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      for (final limit in _limits) Text(limit),
+      for (final entry in _records)
+        ExpansionTile(
+          title: Text(displayText(entry['id']) ?? '设备证据'),
+          subtitle: Text(
+            [
+              ?_when(entry['timestamp']),
+              ?displayText(entry['source']),
+            ].join(' · '),
+          ),
+          children: [
+            SelectableText(const JsonEncoder.withIndent('  ').convert(entry)),
+          ],
+        ),
+      if (_next == null && _records.isEmpty) const Text('设备没有返回匹配的证据。'),
+      if (_error != null) Text(_error!),
+      if (_next != null)
+        TextButton(
+          onPressed: _loading ? null : _read,
+          child: Text(
+            _loading
+                ? '正在读取…'
+                : _records.isEmpty
+                ? '读取调查证据'
+                : '读取下一页',
+          ),
+        ),
+    ],
   );
 }
 

@@ -12,6 +12,8 @@ enum PhoneAction {
   wifiScan('POST', 'radio/wifi-scan'),
   bluetoothStart('POST', 'radio/bluetooth-start'),
   bluetoothStop('POST', 'radio/bluetooth-stop'),
+  monitoringStart('POST', 'monitoring/start'),
+  monitoringStop('POST', 'monitoring/stop'),
   replayStatus('GET', 'replay/status'),
   replayStart('POST', 'replay/start'),
   replayStop('POST', 'replay/stop');

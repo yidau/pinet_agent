@@ -650,7 +650,17 @@ class _ChatScreenState extends State<ChatScreen>
           : latestEvidenceFinding(_entries.skip(_conversationStart)),
       onOpenAi: () => _selectTab(3),
     ),
-    1 => WirelessWorkspace(session: session, observations: _observations),
+    1 => WirelessWorkspace(
+      session: session,
+      observations: _observations,
+      onInvestigate: (question) {
+        _draft.value = TextEditingValue(
+          text: question,
+          selection: TextSelection.collapsed(offset: question.length),
+        );
+        _selectTab(3);
+      },
+    ),
     2 => CaptureWorkspace(session: session, observations: _observations),
     _ => InvestigationWorkspace(
       entries: _entries,

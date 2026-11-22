@@ -107,7 +107,7 @@ async def import_capture(request, directory):
         return meta
 
 
-async def replay_request(request, fields):
+async def confirmed_command(request, fields, optional=()):
     if request.headers.get("content-type", "").partition(";")[0].strip().lower() != "application/json":
         raise RequestError(415, "Expected a JSON operator command.")
     raw = bytearray()
@@ -120,7 +120,8 @@ async def replay_request(request, fields):
         data = json.loads(raw)
     except (ValueError, UnicodeError):
         raise RequestError(400, "Invalid JSON operator command.") from None
-    if not isinstance(data, dict) or set(data) != fields or data.get("confirm") is not True:
+    if (not isinstance(data, dict) or not fields.issubset(data) or set(data) - fields - set(optional)
+            or data.get("confirm") is not True):
         raise RequestError(400, "Explicit operator confirmation is required.")
     return data
 
@@ -144,12 +145,12 @@ def capture_routes(wireless, directory: Path = files.CAPTURES):
             if request.method in {"HEAD", "GET"}:
                 result = await anyio.to_thread.run_sync(wireless.call, "get_capture_status")
             elif request.url.path.endswith("/start"):
-                data = await replay_request(request, {"capture_id", "confirm"})
+                data = await confirmed_command(request, {"capture_id", "confirm"})
                 name = data["capture_id"]
                 files.validate_name(name)
                 result = await anyio.to_thread.run_sync(files.control, "phone-start", name)
             else:
-                await replay_request(request, {"confirm"})
+                await confirmed_command(request, {"confirm"})
                 result = await anyio.to_thread.run_sync(files.control, "stop")
             return JSONResponse(result)
         except RequestError as error:

@@ -9,7 +9,9 @@ from .ap_observations import ApObservations, canonical_bssid, network_summary
 from .capabilities import CapabilityStatus as State
 from .file_sources import SourceError, SourceService
 from .kismet_adapter import PAGE_SIZE, KismetAdapter, KismetError
-from .managed_scan import read_managed_history, read_managed_scan
+from .managed_scan import read_managed_histories, read_managed_history, read_managed_scan
+from .monitoring_session import MonitoringError, monitoring_for
+from .wireless_intelligence import InvestigationPages, investigate, matches_ap
 
 
 NO_SOURCE = "No active monitor source or recent managed scan is available."
@@ -20,6 +22,8 @@ KISMET_TOOLS = {
 }
 AP_TOOLS = {"scan_wireless_environment", "get_access_points", "get_ap_details", "get_wifi_channels"}
 MONITOR_TOOLS = {"get_wireless_clients", "get_signal_history", "get_wireless_events"}
+SESSION_TOOLS = {"start_wireless_monitoring", "stop_wireless_monitoring", "get_wireless_monitoring_status",
+                 "get_wireless_investigation"}
 
 
 class WirelessError(Exception):
@@ -127,7 +131,8 @@ class WifiView:
                        and canonical_bssid(r["mac"]) in confirmed)
         self.aps, self.aliases = observations.current(reports)
         self.clients = [public_device(row) for row in self.devices if row["type"] == "Wi-Fi Client"]
-        self.history = [{"id": row["id"], "name": row["name"], "samples": row["samples"],
+        self.history = [{"id": row["id"], "bssid": row["mac"] if row["type"] == "Wi-Fi AP" else None,
+                         "name": row["name"], "samples": [{**p, "sample_kind": "rrd_peak"} for p in row["samples"]],
                          "observation_source": "monitor_mode"} for row in self.devices if row["samples"]]
         devices_seen = {d["mac"].lower() for d in self.devices} | {row["bssid"] for row in self.aps}
         origin = "kismet" if not self.managed else (
@@ -172,12 +177,15 @@ class WifiView:
 
 
 class WirelessService:
-    tool_names = KISMET_TOOLS | AP_TOOLS | MONITOR_TOOLS | SourceService.tool_names
+    tool_names = KISMET_TOOLS | AP_TOOLS | MONITOR_TOOLS | SESSION_TOOLS | SourceService.tool_names
 
-    def __init__(self, adapter: KismetAdapter | None = None, *, scan_reader=read_managed_scan, source_service=None):
+    def __init__(self, adapter: KismetAdapter | None = None, *, scan_reader=read_managed_scan, source_service=None,
+                 monitoring=None):
         self.adapter = adapter if adapter is not None else KismetAdapter()
         self.scan_reader = scan_reader
         self.observations = ApObservations()
+        self.monitoring = monitoring if monitoring is not None else monitoring_for(self.adapter, scan_reader)
+        self.investigations = InvestigationPages()
         self.source_service = source_service if source_service is not None else SourceService(self.adapter)
 
     def _source_summary(self, sources, error_reason=""):
@@ -193,6 +201,19 @@ class WirelessService:
             wifi_features = wifi.features
             active_count = wifi.monitors + int(wifi.managed)
             wifi_state = wifi.availability
+            if wifi.managed and any(timestamped_signal(row) for row in wifi.aps):
+                states["get_signal_history"] = State.AVAILABLE, ""
+        session = self.monitoring.status()
+        active = session["state"] in ("running", "stopping")
+        states["start_wireless_monitoring"] = (State.DEGRADED, "设备已有持续观测任务。") if active else self.monitoring.availability(sources)
+        states["stop_wireless_monitoring"] = (State.AVAILABLE, "") if active else (
+            State.DEGRADED, "当前没有进行中的持续观测。")
+        states["get_wireless_monitoring_status"] = State.AVAILABLE, ""
+        if session.get("scan_count", 0):
+            states["get_wireless_events"] = State.AVAILABLE, ""
+            if session.get("ap_count", 0):
+                states["get_signal_history"] = states["get_ap_details"] = State.AVAILABLE, ""
+        states["get_wireless_investigation"] = states["get_ap_details"]
         source_states = {**wifi_features, "bluetooth_scan": extra["bluetooth_scanning"], "pcap_replay": extra["pcap_replay"]}
         return states, {"source_states": source_states, "datasource_count": None if sources is None else len(sources),
                         "active_wifi_sources": active_count, "wireless_status": wifi_state["status"],
@@ -222,13 +243,16 @@ class WirelessService:
             states.update(dict.fromkeys(affected, (State.ERROR, str(error))))
             dependencies, details = self._source_summary(None, str(error))
         states.update(dependencies)
-        if states["get_wireless_events"][0] == State.AVAILABLE and states["get_kismet_alerts"][0] == State.ERROR:
+        if (states["get_wireless_events"][0] == State.AVAILABLE and states["get_kismet_alerts"][0] == State.ERROR
+                and not self.monitoring.status().get("scan_count", 0)):
             states["get_wireless_events"] = states["get_kismet_alerts"]
         return states, {**summary, **details}
 
     def call(self, name, **arguments):
         try:
             data = self._read(name, arguments)
+        except MonitoringError as error:
+            raise WirelessError(State.DEGRADED, error.code, str(error)) from error
         except SourceError as error:
             raise WirelessError(error.status, error.code, str(error)) from error
         except KismetError as error:
@@ -236,6 +260,16 @@ class WirelessService:
         return {"source": "kismet", **data, "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 
     def _read(self, name, arguments):
+        if name == "start_wireless_monitoring":
+            return {"source": "monitoring_session", **self.monitoring.start(**arguments)}
+        if name == "stop_wireless_monitoring":
+            return {"source": "monitoring_session", **self.monitoring.stop(**arguments)}
+        if name == "get_wireless_monitoring_status":
+            return {"source": "monitoring_session", **self.monitoring.status()}
+        if name == "get_wireless_investigation" and arguments.get("snapshot_id"):
+            return self._evidence_page(arguments)
+        if name in ("get_ap_details", "get_wireless_investigation", "get_signal_history", "get_wireless_events"):
+            return self._evidence(name, arguments)
         if name in ("get_kismet_status", "get_kismet_version"):
             status = self.adapter.get_server_status()
             return status if name == "get_kismet_status" else {"version": status["version"]}
@@ -267,11 +301,121 @@ class WirelessService:
         status, reason = wifi.tool_states()[name]
         if status != State.AVAILABLE:
             raise WirelessError(status, "CAPABILITY_UNAVAILABLE", reason)
-        if name == "get_wireless_events":
-            alerts = self.adapter.get_alerts()
-            if alerts:
-                phy = self.adapter.get_wifi_phy_id()
-                alerts = [alert for alert in alerts if alert["phy_id"] == phy]
-            return {"events": [public_alert(alert) for alert in alerts[:PAGE_SIZE]], "scope": "recorded_wifi_alerts",
-                    "total": len(alerts), "truncated": len(alerts) > PAGE_SIZE}
         return wifi.read(name, arguments.get("ap_id"))
+
+    def _wifi_events(self, wifi):
+        if wifi is None:
+            return [], "本次无法读取 Kismet 数据源。"
+        status, reason = wifi.tool_states()["get_wireless_events"]
+        if status != State.AVAILABLE:
+            return [], reason
+        try:
+            alerts = self.adapter.get_alerts()
+            if not alerts:
+                return [], ""
+            phy = self.adapter.get_wifi_phy_id()
+            return [public_alert(alert) for alert in alerts if alert["phy_id"] == phy], ""
+        except KismetError as error:
+            return [], str(error)
+
+    def _evidence_page(self, arguments):
+        try:
+            return self.investigations.page(arguments["ap_id"], arguments["snapshot_id"], arguments.get("offset", 0))
+        except KeyError:
+            raise WirelessError(State.DEGRADED, "EVIDENCE_SNAPSHOT_EXPIRED",
+                                "证据快照已过期或不属于此接入点，请从第一页重新读取。") from None
+
+    def _evidence(self, name, arguments):
+        wifi = None
+        unavailable = ""
+        try:
+            wifi = WifiView(self.adapter, self.adapter.get_datasources(), self.scan_reader(), self.observations)
+        except KismetError as error:
+            unavailable = str(error)
+        if name == "get_signal_history":
+            return self._signal_history(wifi, unavailable)
+        alerts, alert_limit = self._wifi_events(wifi)
+        if name == "get_wireless_events":
+            session = self.monitoring.events()
+            has_session = bool(self.monitoring.status().get("scan_count", 0))
+            if alert_limit and not has_session:
+                raise WirelessError(State.DEGRADED, "CAPABILITY_UNAVAILABLE", unavailable or alert_limit)
+            events = sorted([*session["events"], *alerts], key=lambda row: row["timestamp"], reverse=True)
+            sources = ([session.get("source") or "monitoring_session"] if has_session else []) + ([] if alert_limit else ["kismet"])
+            return {"source": "+".join(sources),
+                    "events": events[:PAGE_SIZE], "scope": "recorded_wifi_events", "total": session["total"] + len(alerts),
+                    "truncated": session["truncated"] or len(events) > PAGE_SIZE,
+                    "limitations": [alert_limit] if alert_limit else []}
+        requested = arguments["ap_id"]
+        address = (wifi.aliases.get(requested) if wifi else None) or canonical_bssid(requested)
+        if address is None:
+            raise WirelessError(State.DEGRADED, "AP_NOT_IN_VIEW", "接入点标识不在当前视图中，可使用 BSSID 查询。")
+        retained = self.monitoring.evidence(address)
+        session_ap = retained["access_point"]
+        if wifi and address in {row["bssid"] for row in wifi.aps}:
+            details = wifi.read("get_ap_details", requested)
+        elif session_ap:
+            details = {"access_point": session_ap, "source": session_ap.get("observation_source", "monitoring_session"),
+                       "observations": [], "related_bssids": session_ap.get("related_bssids", [])}
+            unavailable = unavailable or "接入点来自最近一次持续观测，当前无线列表中未见该 BSSID。"
+        else:
+            raise WirelessError(State.DEGRADED, "AP_NOT_IN_VIEW", unavailable or "当前视图和最近一次观测均未记录此接入点。")
+        session_events = retained["events"]
+        session_history = retained["history"]
+        samples = [p for row in session_history["history"] for p in row["samples"]]
+        ap = details["access_point"]
+        linked = [event for event in alerts if matches_ap(event, ap)]
+        limits = [unavailable, alert_limit, "结果限于设备保留的观测窗口，采样间隙内的变化可能未被记录。"]
+        if wifi and wifi.scope["truncated"]:
+            limits.append("本次无线快照只覆盖部分设备。")
+        if session_events["truncated"] or session_history["truncated"]:
+            limits.append("部分历史数据已超出保留或返回范围。")
+        context = investigate(details, samples, [*session_events["events"], *linked], limits)
+        if name == "get_ap_details":
+            events = [row for row in context["evidence"] if row["kind"] == "event"]
+            return {**details, "activity_summary": context["activity_summary"],
+                    "related_events": [{**row["data"], "evidence_id": row["id"]} for row in events[-PAGE_SIZE:]],
+                    "related_events_truncated": len(events) > PAGE_SIZE,
+                    "observations": [row["data"] for row in context["evidence"] if row["kind"] == "observation"],
+                    "investigation_tool": "get_wireless_investigation"}
+        key = self.investigations.store(requested, context)
+        return self._evidence_page({**arguments, "snapshot_id": key})
+
+    def _signal_history(self, wifi, unavailable):
+        history = self.monitoring.history()
+        rows = list(history["history"])
+        truncated = history["truncated"] or bool(wifi and wifi.scope["truncated"])
+        if wifi:
+            rows.extend(wifi.history)
+            if wifi.managed:
+                managed = [ap for ap in wifi.aps if "managed_scan" in ap["observation_sources"]]
+                truncated |= len(managed) > PAGE_SIZE
+                saved = read_managed_histories(wifi.scan_uuid, [ap["bssid"] for ap in managed[:PAGE_SIZE]])
+                for ap in managed[:PAGE_SIZE]:
+                    points = self.observations.history(ap["bssid"], saved.get(ap["bssid"], []))
+                    if points:
+                        rows.append({"id": ap["id"], "bssid": ap["bssid"], "name": ap["ssid"],
+                                     "samples": points, "observation_source": ap["observation_source"]})
+        if not rows and not self.monitoring.status().get("scan_count", 0):
+            raise WirelessError(State.DEGRADED, "CAPABILITY_UNAVAILABLE", unavailable or "没有已记录的信号历史。")
+        grouped = {}
+        for row in rows:
+            key = canonical_bssid(row.get("bssid")) or row["id"]
+            if key not in grouped:
+                grouped[key] = ({k: v for k, v in row.items() if k != "samples"}, {})
+            _, samples = grouped[key]
+            for point in row["samples"]:
+                source = point.get("observation_source") or row["observation_source"]
+                ident = point["timestamp"], source, point.get("sample_kind", "")
+                samples[ident] = {**point, **samples.get(ident, {}), "observation_source": source}
+        output = []
+        for item, points in list(grouped.values())[:PAGE_SIZE]:
+            ordered = sorted(points)
+            truncated |= len(ordered) > 32
+            output.append({**item, "samples": [points[key] for key in ordered[-32:]]})
+        return {"source": "wireless_observations", "history": output,
+                "truncated": truncated or len(grouped) > PAGE_SIZE, "limitations": [unavailable] if unavailable else []}
+
+
+def timestamped_signal(ap):
+    return ap.get("rssi_dbm") is not None and ap.get("rssi_observed_at") is not None
