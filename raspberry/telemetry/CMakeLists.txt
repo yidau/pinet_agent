@@ -39,10 +39,12 @@ target_link_libraries(telemetry_proto PUBLIC protobuf::libprotobuf PkgConfig::GR
 add_library(telemetry_core STATIC src/collectors.cpp src/event_store.cpp src/runtime.cpp)
 target_include_directories(telemetry_core PUBLIC src)
 target_link_libraries(telemetry_core PUBLIC telemetry_proto
-    PRIVATE OpenSSL::Crypto SQLite::SQLite3 CURL::libcurl nlohmann_json::nlohmann_json Threads::Threads)
+    PRIVATE OpenSSL::Crypto CURL::libcurl nlohmann_json::nlohmann_json Threads::Threads)
 
 add_executable(piagent-telemetry src/main.cpp)
-target_link_libraries(piagent-telemetry PRIVATE telemetry_core Threads::Threads)
+add_library(device_authorization STATIC src/device_authorization.cpp)
+target_link_libraries(device_authorization PRIVATE OpenSSL::Crypto SQLite::SQLite3)
+target_link_libraries(piagent-telemetry PRIVATE telemetry_core device_authorization Threads::Threads)
 install(TARGETS piagent-telemetry RUNTIME DESTINATION bin)
 
 include(CTest)
@@ -51,7 +53,7 @@ if(BUILD_TESTING)
     target_link_libraries(collectors_test PRIVATE telemetry_core nlohmann_json::nlohmann_json Threads::Threads)
     add_test(NAME collectors COMMAND collectors_test)
     add_executable(event_store_test tests/event_store_test.cpp)
-    target_link_libraries(event_store_test PRIVATE telemetry_core OpenSSL::Crypto SQLite::SQLite3)
+    target_link_libraries(event_store_test PRIVATE telemetry_core device_authorization OpenSSL::Crypto SQLite::SQLite3)
     add_test(NAME event_store COMMAND event_store_test)
     add_executable(telemetry_stream_test tests/stream_test.cpp)
     target_link_libraries(telemetry_stream_test PRIVATE telemetry_core OpenSSL::Crypto SQLite::SQLite3)

@@ -6,10 +6,13 @@ StartLimitBurst=4
 [Service]
 User=piagent-kismet
 Group=piagent-kismet
-StateDirectory=piagent-kismet
-StateDirectoryMode=0700
-WorkingDirectory=/var/lib/piagent-kismet
-ExecStart=/usr/bin/kismet --no-ncurses --no-line-wrap --no-logging --homedir /var/lib/piagent-kismet --override /etc/kismet/piagent.conf
+ReadWritePaths=/var/lib/piagent-kismet/.kismet
+RuntimeDirectory=piagent-kismet
+RuntimeDirectoryMode=0700
+Environment=HOME=/run/piagent-kismet
+WorkingDirectory=/run/piagent-kismet
+ExecStartPre=/usr/bin/mkdir -p /run/piagent-kismet/.kismet
+ExecStart=/usr/bin/kismet --no-ncurses --no-line-wrap --no-logging --homedir /run/piagent-kismet --override /etc/kismet/piagent.conf
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=yes

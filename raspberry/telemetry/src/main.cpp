@@ -1,4 +1,5 @@
 #include "event_store.hpp"
+#include "device_authorization.hpp"
 #include "monitoring.grpc.pb.h"
 #include "runtime.hpp"
 
@@ -156,10 +157,8 @@ public:
             if (!writer.write(message)) return grpc::Status::OK;
             std::uint64_t cursor = request->last_event_sequence();
             const auto& previous_boot = request->last_boot_id();
-            const auto delimiter = previous_boot.rfind(':');
-            const bool journal_changed = delimiter != std::string::npos &&
-                previous_boot.substr(delimiter + 1) != events_.generation();
-            if (journal_changed || cursor > events_.latest()) {
+            const bool session_changed = (!previous_boot.empty() || cursor != 0) && previous_boot != boot;
+            if (session_changed || cursor > events_.latest()) {
                 cursor = 0;
                 if (!send_gap(writer, boot, cursor, "cursor_reset")) return grpc::Status::OK;
             }
@@ -177,18 +176,16 @@ public:
                     *message.mutable_snapshot() = std::move(snapshot);
                     if (!writer.write(message)) break;
                 }
-                // Read the watermark before the row so concurrent appends cannot
-                // cause a retained event to be skipped as a missing range.
-                const auto latest = events_.latest();
-                auto next = events_.next(cursor);
+                auto replay = events_.read_after(cursor);
+                auto& next = replay.next;
                 if (next) {
                     if (next->sequence() > cursor + 1 &&
                         !send_gap(writer, boot, next->sequence() - 1, "history_pruned")) break;
                     cursor = next->sequence();
                     *message.mutable_event() = std::move(*next);
                     if (!writer.write(message)) break;
-                } else if (latest > cursor) {
-                    cursor = latest;
+                } else if (replay.latest > cursor) {
+                    cursor = replay.latest;
                     if (!send_gap(writer, boot, cursor, "history_pruned")) break;
                 } else {
                     std::this_thread::sleep_for(150ms);
@@ -247,9 +244,9 @@ int run() {
     tls.pem_key_cert_pairs.push_back({
         text_file(env("PIAGENT_TELEMETRY_TLS_KEY", (directory / "server.key").c_str())),
         text_file(env("PIAGENT_TELEMETRY_TLS_CERT", (directory / "server.pem").c_str()))});
-    EventStore events(env("PIAGENT_TELEMETRY_EVENTS", "/var/lib/piagent-telemetry/events.sqlite3"));
+    EventStore events(boot_id());
     Runtime state(events, KismetCollector(env("PIAGENT_KISMET_URL"), env("PIAGENT_KISMET_API_KEY")),
-                  boot_id() + ":" + events.generation());
+                  events.session_id());
     TelemetryService service(state, events, env("PIAGENT_DEVICE_REGISTRY", "/var/lib/piagent-devices/devices.sqlite3"));
 
     grpc::ServerBuilder builder;

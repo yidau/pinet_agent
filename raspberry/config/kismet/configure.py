@@ -37,6 +37,10 @@ def read_fields(path):
                 if line and not line.lstrip().startswith("#") and "=" in line)
 
 
+def key_headers(port, key):
+    return {"Cookie": f"KISMET={key}; KISMET_{port}={key}"}
+
+
 def run(*argv):
     subprocess.run(argv, check=True)
 
@@ -105,11 +109,13 @@ def setup(port, *, runtime_only=False):
         time.sleep(0.4)
 
     key = read_fields(ENV).get("PIAGENT_KISMET_API_KEY", "") if ENV.exists() else ""
-    if not key or api(port, "/datasource/all_sources.json", {"Cookie": "KISMET=" + key})[0] != 200:
+    if not key or api(port, "/datasource/all_sources.json", key_headers(port, key))[0] != 200:
         key = create_key(port, headers, "readonly")
-        if api(port, "/datasource/all_sources.json", {"Cookie": "KISMET=" + key})[0] != 200:
+        if api(port, "/datasource/all_sources.json", key_headers(port, key))[0] != 200:
             raise SystemExit("The new readonly credential failed verification.")
-    write_private(ENV, f"PIAGENT_KISMET_URL=http://127.0.0.1:{port}\nPIAGENT_KISMET_API_KEY={key}\n")
+    contents = f"PIAGENT_KISMET_URL=http://127.0.0.1:{port}\nPIAGENT_KISMET_API_KEY={key}\n"
+    if not ENV.exists() or ENV.read_text() != contents:
+        write_private(ENV, contents)
     run("systemctl", "daemon-reload")
     print(f"Kismet ready on loopback port {port}. The C++ telemetry service reads the readonly Kismet credentials from its environment file.")
 

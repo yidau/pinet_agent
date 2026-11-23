@@ -326,7 +326,8 @@ Response request(const std::string& base, const std::string& key, const std::str
     std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> client(curl_easy_init(), curl_easy_cleanup);
     if (!client) return {};
     const auto url = base + path;
-    const auto cookie = "KISMET=" + key;
+    const auto port = base.substr(base.rfind(':') + 1);
+    const auto cookie = "KISMET=" + key + "; KISMET_" + port + "=" + key;
     std::string response, post;
     curl_easy_setopt(client.get(), CURLOPT_URL, url.c_str());
     curl_easy_setopt(client.get(), CURLOPT_COOKIE, cookie.c_str());

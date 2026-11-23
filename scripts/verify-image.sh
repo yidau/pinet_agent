@@ -57,6 +57,21 @@ if [[ ! -u "$root$capture" ]]; then
     [[ "$cap" == *cap_net_admin* && "$cap" == *cap_net_raw* ]]
 fi
 grep -RqE 'filter_mgmt=true' "$root$app" 2>/dev/null
+unit_dir="$root/etc/systemd/system"
+systemctl --root="$root" is-enabled tmp.mount
+grep -qx 'Type=tmpfs' "$unit_dir/tmp.mount"
+grep -Eq '^Options=.*[,=]size=64M$' "$unit_dir/tmp.mount"
+grep -qx 'Storage=volatile' "$root/etc/systemd/journald.conf.d/pocketnet.conf"
+grep -qx 'RuntimeMaxUse=32M' "$root/etc/systemd/journald.conf.d/pocketnet.conf"
+grep -qx 'WorkingDirectory=/run/piagent-kismet' "$unit_dir/piagent-kismet.service"
+grep -qx 'enable_logging=false' "$root/etc/kismet/piagent.conf"
+grep -qx 'httpd_session_db=/var/lib/piagent-kismet/.kismet/session.db' "$root/etc/kismet/piagent.conf"
+grep -qx 'httpd_auth_file=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$root/etc/kismet/piagent.conf"
+if grep -q '^StateDirectory=' "$unit_dir/piagent-telemetry.service"; then
+    echo 'Unexpected persistent telemetry directory.' >&2
+    exit 1
+fi
+awk '$1 !~ /^#/ && $3 == "swap" { print "Review swap configuration:", $1 }' "$root/etc/fstab"
 for unit in pocketnet-firstboot piagent-telemetry piagent-kismet piagent-wireless-manager piagent-ble-time-sync; do
     [[ -f "$root/etc/systemd/system/$unit.service" ]]
 done

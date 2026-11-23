@@ -13,7 +13,7 @@ import sys
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from configure import ENV, HERE, STATE, api, create_key, read_fields, run, write_private
+from configure import ENV, HERE, STATE, api, create_key, key_headers, read_fields, run, write_private
 
 
 ROOT = HERE.parents[2]
@@ -120,9 +120,9 @@ def setup(args):
         raise SystemExit("Expected the existing log-free, loopback-only PiAgent Kismet configuration.")
     key = KEY.read_text(encoding="ascii").strip() if KEY.exists() else ""
     auth_resource = "/auth/apikey/list.json"
-    if not key or api(config.kismet_port, auth_resource, {"Cookie": "KISMET=" + key})[0] != 200:
+    if not key or api(config.kismet_port, auth_resource, key_headers(config.kismet_port, key))[0] != 200:
         key = create_key(config.kismet_port, headers, "admin")
-        if api(config.kismet_port, auth_resource, {"Cookie": "KISMET=" + key})[0] != 200:
+        if api(config.kismet_port, auth_resource, key_headers(config.kismet_port, key))[0] != 200:
             raise SystemExit("The dedicated Kismet credential could not authorize datasource management.")
     subprocess.run(["systemd-sysusers", "-"], text=True, check=True,
                    input='g kismet -\nu piagent-wireless - "PocketNet wireless datasource manager"\n')

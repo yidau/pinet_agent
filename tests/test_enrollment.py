@@ -137,10 +137,12 @@ class EnrollmentAcceptance(unittest.IsolatedAsyncioTestCase):
 
     async def test_r4_signed_reconnect_keeps_identity(self):
         initial = await self.register()
+        before = self.registry.database.stat().st_mtime_ns
         self.service.disconnect(FIRST)
         resumed = await self.register(SECOND, mode="resume")
         self.assertEqual(initial["device_id"], resumed["device_id"])
         self.assertEqual(initial["psk"], resumed["psk"])
+        self.assertEqual(self.registry.database.stat().st_mtime_ns, before)
         self.assertEqual(len(self.registry.list_devices()), 1)
 
     async def test_r5_registry_survives_service_recreation(self):

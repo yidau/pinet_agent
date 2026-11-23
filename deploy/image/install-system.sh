@@ -31,20 +31,17 @@ install -m 0644 "$source_dir/deploy/systemd/piagent-hotspot.service" \
 
 for service in raspberry/config/time-sync/{piagent-ble-time-sync.service,piagent-clock.service,piagent-clock.socket} \
     raspberry/config/enrollment/{piagent-enrollment-wifi.service,piagent-enrollment-wifi.socket} \
-    raspberry/config/kismet/{piagent-kismet.service,piagent-wireless-manager.service} \
-    raspberry/telemetry/piagent-telemetry.service; do
+    raspberry/config/kismet/piagent-wireless-manager.service; do
     install -m 0644 "$source_dir/$service" "$unit_dir/"
 done
 install -m 0644 "$source_dir/raspberry/config/time-sync/piagent-time-sync.sysusers.conf" \
     "$source_dir/raspberry/config/enrollment/piagent-enrollment.sysusers.conf" "$root/etc/sysusers.d/"
 install -m 0644 "$source_dir/deploy/systemd/pocketnet-kismet.sysusers.conf" "$root/etc/sysusers.d/"
-for service in piagent-ble-time-sync piagent-clock piagent-enrollment-wifi piagent-telemetry piagent-wireless-manager; do
+for service in piagent-clock piagent-enrollment-wifi piagent-telemetry piagent-wireless-manager; do
     install -D -m 0644 "$source_dir/deploy/systemd/$service.conf" "$unit_dir/$service.service.d/90-pocketnet-image.conf"
 done
 install -m 0644 "$source_dir/deploy/systemd/hostapd.conf" "$root/etc/hostapd/piagent.conf"
 install -m 0644 "$source_dir/deploy/systemd/dnsmasq.conf" "$root/etc/piagent-dnsmasq.conf"
-install -m 0644 "$source_dir/raspberry/config/kismet/piagent.conf" "$root/etc/kismet/piagent.conf"
-printf '\nhttpd_port=2501\n' >> "$root/etc/kismet/piagent.conf"
 if grep -qx '\[Policy\]' "$root/etc/bluetooth/main.conf"; then
     sed -i '/^AutoEnable=/d; /^\[Policy\]$/a AutoEnable=true' "$root/etc/bluetooth/main.conf"
 else

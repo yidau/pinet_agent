@@ -74,7 +74,8 @@ struct Child {
     }
 };
 
-void test_stream(const std::string& endpoint, const std::string& registry_path, const std::string& cert) {
+std::string test_stream(const std::string& endpoint, const std::string& registry_path, const std::string& cert,
+                        const std::string& previous, bool revoke) {
     grpc::SslCredentialsOptions tls;
     tls.pem_root_certs = cert;
     const auto channel = grpc::CreateChannel(endpoint, grpc::SslCredentials(tls));
@@ -94,27 +95,31 @@ void test_stream(const std::string& endpoint, const std::string& registry_path, 
         grpc::ClientContext context;
         context.set_deadline(std::chrono::system_clock::now() + 8s);
         context.AddMetadata("authorization", "Bearer " + token);
-        request.set_last_boot_id("previous-boot:00000000000000000000000000000000");
+        request.set_last_boot_id(previous);
         request.set_last_event_sequence(1);
         auto stream = client->Subscribe(&context, request);
         check(stream->Read(&message) && message.has_snapshot() && message.snapshot().schema_version() == 1,
               "first message was not the current snapshot");
+        const auto session = message.snapshot().boot_id();
+        check(session != previous && session.size() == 69, "expected a unique Linux boot/process session");
+        if (revoke) check(session.substr(0, 36) == previous.substr(0, 36), "expected the same Linux boot");
         check(stream->Read(&message) && message.has_history_gap() &&
               message.history_gap().reason() == "cursor_reset" &&
               message.history_gap().through_event_sequence() == 0,
               "journal replacement with a valid numeric cursor was not detected");
         while (stream->Read(&message) && message.has_snapshot()) {}
-        check(message.has_event() && message.event().sequence() == 1,
-              "replacement journal did not replay its first event");
-        while (stream->Read(&message) && message.has_snapshot()) {}
-        check(message.has_history_gap() && message.history_gap().through_event_sequence() == 2,
-              "stream did not report the retained-history gap");
-        check(stream->Read(&message) && message.has_event() && message.event().sequence() == 3 &&
-              message.event().event_id() == "previous-boot:3", "stream did not replay the retained event");
-        registry(registry_path, true);
-        while (stream->Read(&message)) {}
-        check(stream->Finish().error_code() == grpc::StatusCode::PERMISSION_DENIED,
-              "revocation did not terminate the existing stream");
+        check(message.has_event() && message.event().sequence() == 1 &&
+              message.event().event_id() == session + ":1", "new session did not replay its first event");
+        if (revoke) {
+            registry(registry_path, true);
+            while (stream->Read(&message)) {}
+            check(stream->Finish().error_code() == grpc::StatusCode::PERMISSION_DENIED,
+                  "revocation did not terminate the existing stream");
+        } else {
+            context.TryCancel();
+            stream->Finish();
+        }
+        return session;
     }
 }
 }  // namespace
@@ -129,39 +134,31 @@ int main(int argc, char** argv) {
         const auto key = fixture + "/test.key";
         const auto pem = fixture + "/test.pem";
         const auto registry_path = fixture + "/registry.sqlite3";
-        const auto events_path = fixture + "/history.sqlite3";
         const auto openssl = "openssl req -new -x509 -nodes -newkey rsa:2048 -days 1 -subj /CN=127.0.0.1 "
                              "-addext subjectAltName=IP:127.0.0.1 -keyout " + key + " -out " + pem + " 2>/dev/null";
         check(std::system(openssl.c_str()) == 0, "could not generate isolated TLS fixture");
         registry(registry_path);
-        {
-            telemetry::EventStore events(events_path, 2);
-            v1::MonitoringEvent seed;
-            seed.set_boot_id("previous-boot");
-            seed.set_priority(v1::P1);
-            auto lower_priority = seed;
-            lower_priority.set_priority(v1::P3);
-            events.append({seed, lower_priority, seed});
-        }
-        const auto endpoint = loopback_address();
         std::ifstream certificate(pem);
         std::ostringstream trusted;
         trusted << certificate.rdbuf();
 
-        Child child{fork()};
-        check(child.pid >= 0, "fork test server");
-        if (child.pid == 0) {
-            setenv("PIAGENT_TELEMETRY_LISTEN", endpoint.c_str(), 1);
-            setenv("PIAGENT_TELEMETRY_TLS_KEY", key.c_str(), 1);
-            setenv("PIAGENT_TELEMETRY_TLS_CERT", pem.c_str(), 1);
-            setenv("PIAGENT_DEVICE_REGISTRY", registry_path.c_str(), 1);
-            setenv("PIAGENT_TELEMETRY_EVENTS", events_path.c_str(), 1);
-            unsetenv("PIAGENT_KISMET_URL");
-            unsetenv("PIAGENT_KISMET_API_KEY");
-            execl(argv[1], argv[1], static_cast<char*>(nullptr));
-            _exit(127);
+        std::string session = "prior-installation";
+        for (bool revoke : {false, true}) {
+            const auto endpoint = loopback_address();
+            Child child{fork()};
+            check(child.pid >= 0, "fork test server");
+            if (child.pid == 0) {
+                setenv("PIAGENT_TELEMETRY_LISTEN", endpoint.c_str(), 1);
+                setenv("PIAGENT_TELEMETRY_TLS_KEY", key.c_str(), 1);
+                setenv("PIAGENT_TELEMETRY_TLS_CERT", pem.c_str(), 1);
+                setenv("PIAGENT_DEVICE_REGISTRY", registry_path.c_str(), 1);
+                unsetenv("PIAGENT_KISMET_URL");
+                unsetenv("PIAGENT_KISMET_API_KEY");
+                execl(argv[1], argv[1], static_cast<char*>(nullptr));
+                _exit(127);
+            }
+            session = test_stream(endpoint, registry_path, trusted.str(), session, revoke);
         }
-        test_stream(endpoint, registry_path, trusted.str());
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         result = 1;

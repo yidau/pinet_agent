@@ -28,11 +28,19 @@
 
     scp -o BindAddress=192.168.77.1 <更新包> yidau@192.168.77.2:~/
 
-在树莓派安装，填入同一文件在 SHA256SUMS 中的哈希。
+首次升级到 RAM-first 版本时，将当前源码里的 `deploy/release/install.sh` 一同通过 SCP 上传到家目录，并用它安装更新包。填入更新包在 SHA256SUMS 中的哈希。
+
+    sudo bash ~/install.sh --sha256 <SHA-256> ~/<更新包>
+
+之后可以直接调用设备上已更新的安装器。
 
     sudo /opt/pocketnet/deploy/install-release.sh --sha256 <SHA-256> ~/<更新包>
 
-更新器保留设备身份、手机注册和事件数据库。完整镜像适用于新卡或重新初始化。需要预配外接 USB 监听网卡时，在目标镜像的 /etc/pocketnet/usb-monitor.conf 中填写一行“接口名 USB 厂商 ID USB 产品 ID USB 端口 驱动名”。永久注册二维码生成在 /root/piagent-enrollment.svg。
+更新器保留设备身份、手机注册、TLS 和 Kismet 凭据。升级失败时回退软件链接和修改过的系统配置。树莓派事件缓冲在 RAM，历史以手机 SQLite 为准。已有版本留下的事件文件保留供回退，RAM-first 服务不再打开它们。完整镜像适用于新卡或重新初始化。
+
+镜像和 SSH 升级都安装 32 MiB 的 volatile journald 配置和 64 MiB 的 `/tmp` tmpfs 单元。就地升级后，`/tmp` 在下一次启动时切换。Ubuntu 的 `/run` 与 `/dev/shm` 作为 RAM 运行目录，本次不迁移 `/var/lib` 或添加 swap。真实 SD 卡写入量、网卡和手机通信由实机验收确认。
+
+需要预配外接 USB 监听网卡时，在目标镜像的 /etc/pocketnet/usb-monitor.conf 中填写一行“接口名 USB 厂商 ID USB 产品 ID USB 端口 驱动名”。永久注册二维码生成在 /root/piagent-enrollment.svg。
 
 可在 Ubuntu 22.04 WSL2 离线检查已经生成的镜像。
 

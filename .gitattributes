@@ -1,2 +1,6 @@
 /scripts/*.sh text eol=lf
 /deploy/** text eol=lf
+/raspberry/config/runtime/** text eol=lf
+/raspberry/config/kismet/*.conf text eol=lf
+/raspberry/config/kismet/*.service text eol=lf
+/raspberry/telemetry/*.service text eol=lf

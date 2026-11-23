@@ -65,7 +65,6 @@ class Registry:
             if row is not None:
                 if row["status"] != "active":
                     raise ValueError("Device authorization is inactive")
-                connection.execute("UPDATE devices SET last_seen = ? WHERE device_id = ?", (now, row["device_id"]))
                 return row
             enabled = connection.execute("SELECT value FROM settings WHERE name = 'registration_enabled'").fetchone()[0]
             if not register or not enabled:

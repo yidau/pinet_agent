@@ -7,7 +7,7 @@ StartLimitIntervalSec=0
 [Service]
 User=piagent-ble
 WorkingDirectory=/opt/piagent-time-sync
-ExecStart=/opt/piagent-time-sync/.venv/bin/python -m raspberry.time_sync.ble_server --peer-file /etc/piagent-time-sync/peer
+ExecStart=/opt/piagent-time-sync/.venv/bin/python -B -m raspberry.time_sync.ble_server --peer-file /etc/piagent-time-sync/peer
 Environment=PYTHONDONTWRITEBYTECODE=1
 Restart=on-failure
 RestartSec=3s

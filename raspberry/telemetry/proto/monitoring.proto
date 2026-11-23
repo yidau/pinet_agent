@@ -9,6 +9,7 @@ service TelemetryService {
 message SubscribeRequest {
   optional string device_id = 1;
   optional uint64 last_event_sequence = 2;
+  // Replay epoch received in boot_id, opaque to clients.
   optional string last_boot_id = 3;
 }
 
@@ -27,6 +28,7 @@ message HistoryGap {
 }
 
 message MonitoringSnapshot {
+  // Replay epoch: Linux boot identifier followed by a per-process identifier.
   optional string boot_id = 1;
   optional uint64 sequence = 2;
   optional int64 timestamp_ms = 3;

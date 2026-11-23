@@ -70,6 +70,8 @@ for component in config enrollment time_sync wireless; do
 done
 find "$work/payload" -type d -name __pycache__ -prune -exec rm -rf -- {} +
 install -m 0755 -- "$source_dir/deploy/release/install.sh" "$work/payload/install.sh"
+install -m 0644 -- "$source_dir/raspberry/telemetry/piagent-telemetry.service" "$work/payload/raspberry/config/runtime/"
+install -m 0644 -- "$source_dir/deploy/systemd/piagent-ble-time-sync.conf" "$work/payload/raspberry/config/runtime/"
 
 python_version=$(chroot "$root" /opt/pocketnet/python/bin/python3.12 --version)
 [[ "$python_version" == 'Python 3.12.'* ]] || { echo "The image needs ARM64 Python 3.12" >&2; exit 1; }

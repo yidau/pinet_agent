@@ -6,9 +6,9 @@ PocketNet is a Raspberry Pi based passive wireless security observation device.
 
 - Raspberry Pi built-in Wi-Fi provides the private phone management hotspot.
 - A separately bound USB Wi-Fi adapter operates in Monitor Mode.
-- Kismet is the persistent wireless capture engine. The managed Linux Wi-Fi source uses `filter_mgmt=true` to retain management frames and EAPOL.
-- A native C++ service collects Linux metrics, reads Kismet metadata, stores bounded security events, and exposes a TLS gRPC/Protobuf streaming API.
-- The Flutter app provides the live dashboard and SQLite-backed event center.
+- Kismet tracks wireless state in RAM. The managed Linux Wi-Fi source retains management frames and EAPOL with `filter_mgmt=true`. Capture files and wireless history are disabled by default.
+- A native C++ service collects Linux metrics, reads Kismet metadata and replays recent events from a bounded RAM buffer over TLS gRPC.
+- The Flutter app provides the live dashboard and persists event history and replay cursors in SQLite. Events awaiting sync may be lost when the Pi restarts.
 - BLE enrollment, BLE time synchronization and the small USB/Kismet datasource manager remain Python components for now. Ubuntu 22.04 deployment must provide Python 3.12 for the BLE time-sync service.
 - There is no MCP server, MCP SDK, or Agent runtime on the Raspberry Pi. The business interface is gRPC/Protobuf.
 - AI is reserved in the mobile UI and is not implemented in this release.

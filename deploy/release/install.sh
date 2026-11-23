@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -27,6 +28,7 @@ import time
 RELEASE = re.compile(r"[a-f0-9]{40}")
 SHA256 = re.compile(r"[a-fA-F0-9]{64}")
 TELEMETRY = "bin/piagent-telemetry"
+RUNTIME_CONFIG = Path("raspberry/config/runtime")
 PACKAGED_DIRS = {"bin", "raspberry"}
 PACKAGED_FILES = {"install.sh", "manifest.json"}
 REQUIRED_VERSION_FIELDS = (
@@ -172,6 +174,81 @@ def place_updater(prefix, source):
         os.replace(staged_updater, deploy / staged_updater.name)
 
 
+def managed_configuration(root, release):
+    assets = release / RUNTIME_CONFIG
+    if not assets.is_dir():
+        return {}
+    settings = {
+        "etc/systemd/system/piagent-telemetry.service": (assets / "piagent-telemetry.service").read_bytes(),
+        "etc/systemd/system/piagent-ble-time-sync.service.d/90-pocketnet-image.conf":
+            (assets / "piagent-ble-time-sync.conf").read_bytes(),
+        "etc/systemd/system/piagent-kismet.service":
+            (release / "raspberry/config/kismet/piagent-kismet.service").read_bytes(),
+        "etc/systemd/system/tmp.mount": (assets / "tmp.mount").read_bytes(),
+        "etc/systemd/journald.conf.d/pocketnet.conf": (assets / "pocketnet-journald.conf").read_bytes(),
+    }
+    kismet = "etc/kismet/piagent.conf"
+    template = (release / "raspberry/config/kismet/piagent.conf").read_bytes()
+    if (root / kismet).is_file():
+        keys = {b"httpd_auth_file", b"httpd_session_db", b"enable_logging"}
+        current = (root / kismet).read_bytes().splitlines()
+        lines = [line for line in current if line.split(b"=", 1)[0].strip() not in keys]
+        lines.extend(line for line in template.splitlines() if line.partition(b"=")[0] in keys)
+        settings[kismet] = b"\n".join(lines) + b"\n"
+    else:
+        settings[kismet] = template + b"\nhttpd_port=2501\n"
+
+    fstab = root / "etc/fstab"
+    if fstab.is_file():
+        for line in fstab.read_text().splitlines():
+            fields = line.split("#", 1)[0].split()
+            if fields[1:2] == ["/tmp"] and fields[2:3] != ["tmpfs"]:
+                raise ValueError("Resolve the existing fstab /tmp entry before applying the PocketNet mount")
+    settings["etc/systemd/system/local-fs.target.wants/tmp.mount"] = "../tmp.mount"
+    return settings
+
+
+def configuration_state(path):
+    if path.is_symlink():
+        return os.readlink(path), None
+    if path.exists():
+        if not path.is_file():
+            raise ValueError(f"Unexpected managed configuration path: {path}")
+        return path.read_bytes(), path.stat()
+    return None, None
+
+
+def write_configuration(path, contents, metadata=None):
+    if contents is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".pocketnet-", dir=path.parent) as temp:
+        staged = Path(temp) / path.name
+        if isinstance(contents, str):
+            staged.symlink_to(contents)
+        else:
+            staged.write_bytes(contents)
+            if metadata:
+                os.chown(staged, metadata.st_uid, metadata.st_gid)
+            staged.chmod(stat.S_IMODE(metadata.st_mode) if metadata else 0o644)
+        os.replace(staged, path)
+
+
+def configuration_units(paths):
+    units = []
+    for path in paths:
+        if path.endswith("journald.conf.d/pocketnet.conf"):
+            units.append("systemd-journald.service")
+        if path.endswith(("piagent-kismet.service", "kismet/piagent.conf")):
+            units.extend(("piagent-kismet.service", "piagent-wireless-manager.service"))
+        if path.endswith("piagent-telemetry.service"):
+            units.append("piagent-telemetry.service")
+        if path.endswith("piagent-ble-time-sync.service.d/90-pocketnet-image.conf"):
+            units.append("piagent-ble-time-sync.service")
+    return units
+
+
 def install(root, live, archive, expected_sha):
     prefix = root / "opt/pocketnet"
     prefix.mkdir(parents=True, exist_ok=True)
@@ -201,26 +278,38 @@ def install(root, live, archive, expected_sha):
 
             previous = current_link(prefix)
             selected = f"releases/{release.name}"
-            if previous == selected:
-                place_updater(prefix, release / "install.sh")
-                print(f"PocketNet {release.name} is already installed")
-                return
             before = validate_payload(prefix / previous)["files"] if previous else {}
-            units = [unit for unit in changed_units(before, manifest["files"]) if live and active(unit)]
+            config = managed_configuration(root, release)
+            prior_config = {path: configuration_state(root / path) for path in config}
+            changes = {path: value for path, value in config.items() if prior_config[path][0] != value}
+            units = [unit for unit in dict.fromkeys(configuration_units(changes) +
+                     changed_units(before, manifest["files"])) if live and active(unit)]
+            applied = []
             try:
-                set_current(prefix, selected)
+                for path, value in changes.items():
+                    write_configuration(root / path, value, prior_config[path][1])
+                    applied.append(path)
+                if previous != selected:
+                    set_current(prefix, selected)
+                if live and applied:
+                    subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=20)
                 restart(units)
                 place_updater(prefix, release / "install.sh")
             except BaseException:
                 if current_link(prefix) == selected:
                     if previous:
                         set_current(prefix, previous)
-                        try:
-                            restart(units)
-                        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                            print(f"Rollback service restart failed: {error}", file=sys.stderr)
                     else:
                         (prefix / "current").unlink()
+                try:
+                    for path in reversed(applied):
+                        write_configuration(root / path, *prior_config[path])
+                    if live and applied:
+                        subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=20)
+                    if previous:
+                        restart(units)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    print(f"Rollback configuration or service restart failed: {error}", file=sys.stderr)
                 raise
             print(f"Installed PocketNet release {release.name}")
 

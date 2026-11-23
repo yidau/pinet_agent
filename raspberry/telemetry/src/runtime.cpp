@@ -5,6 +5,7 @@
 #include <exception>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <utility>
 
 namespace pocketnet::telemetry {
@@ -91,13 +92,18 @@ v1::MonitoringSnapshot Runtime::snapshot() const {
 }
 
 void Runtime::enqueue(v1::MonitoringEvent event) {
-    event.set_boot_id(boot_id_);
     if (!event.has_occurrences()) event.set_occurrences(1);
     const std::lock_guard<std::mutex> guard(lock_);
+    if (event.ByteSizeLong() > EventStore::max_event_bytes) {
+        ++drops_;
+        return;
+    }
     const auto duplicate = std::find_if(pending_.begin(), pending_.end(),
         [&](auto& queued) { return same_notice(queued, event); });
     if (duplicate != pending_.end()) {
-        duplicate->set_occurrences(duplicate->occurrences() + 1);
+        if (duplicate->occurrences() < std::numeric_limits<std::uint32_t>::max()) {
+            duplicate->set_occurrences(duplicate->occurrences() + 1);
+        }
         ++merges_;
         return;
     }
@@ -195,7 +201,6 @@ void Runtime::sample_wireless() {
 void Runtime::publish() {
     auto next_snapshot = Clock::now();
     std::uint64_t sequence = 0;
-    bool journal_error = false;
     for (;;) {
         std::vector<v1::MonitoringEvent> batch;
         v1::MonitoringSnapshot message;
@@ -220,24 +225,11 @@ void Runtime::publish() {
             batch.assign(std::make_move_iterator(pending_.begin()), std::make_move_iterator(pending_.end()));
             pending_.clear();
         }
-        try {
-            events_.append(batch);
-            if (journal_error) {
-                journal_error = false;
-                enqueue(notice("event_storage_recovered", v1::P1, "telemetry", "event_storage_recovered"));
-            }
-        } catch (const std::exception& error) {
-            if (!journal_error) std::cerr << "Telemetry event storage failed: " << error.what() << '\n';
-            journal_error = true;
-            const std::lock_guard<std::mutex> guard(lock_);
-            drops_ += batch.size();
-        }
+        events_.append(batch);
         if (message.has_sequence()) {
-            try {
-                message.set_latest_event_sequence(events_.latest());
-            } catch (const std::exception&) {
-                message.mutable_capture()->set_reason("event_storage_unavailable");
-            }
+            message.set_latest_event_sequence(events_.latest());
+            auto* delivery = message.mutable_delivery();
+            delivery->set_dropped_events(delivery->dropped_events() + events_.stats().dropped);
             const std::lock_guard<std::mutex> guard(snapshot_lock_);
             snapshot_ = std::move(message);
         }

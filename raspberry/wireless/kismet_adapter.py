@@ -104,10 +104,10 @@ class KismetAdapter:
         self._url = base_url if base_url is not None else os.environ.get("PIAGENT_KISMET_URL", "")
         self._key = api_key if api_key is not None else os.environ.get("PIAGENT_KISMET_API_KEY", "")
 
-    def _headers(self):
+    def _headers(self, port):
         if not re.fullmatch(r"[A-Za-z0-9._~+/=-]+", self._key):
             raise KismetError("KISMET_CONFIGURATION", "The local Kismet API key is missing or invalid.")
-        return {"Cookie": "KISMET=" + self._key, "Accept": "application/json"}
+        return {"Cookie": f"KISMET={self._key}; KISMET_{port}={self._key}", "Accept": "application/json"}
 
     def _request(self, path: str, form: dict | None = None, *, text_reply=False, timeout=1.5):
         # http.client neither follows redirects nor uses system proxy settings.
@@ -121,7 +121,7 @@ class KismetAdapter:
                 raise ValueError()
         except ValueError:
             raise KismetError("KISMET_CONFIGURATION", "Set a loopback Kismet URL with its configured port.") from None
-        headers = self._headers()
+        headers = self._headers(port)
         body = None
         if form is not None:
             body = urlencode(form)

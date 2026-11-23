@@ -1,0 +1,12 @@
+[Unit]
+Description=Bounded temporary storage in RAM
+Before=local-fs.target
+
+[Mount]
+What=tmpfs
+Where=/tmp
+Type=tmpfs
+Options=mode=1777,nosuid,nodev,size=64M
+
+[Install]
+WantedBy=local-fs.target

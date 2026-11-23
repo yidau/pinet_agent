@@ -183,6 +183,12 @@ void main() {
       final durable = await repository.load(target.deviceKey);
       expect(durable.cursor, (bootId: 'boot-b', sequence: Int64(1)));
       expect(durable.messages.first.event.eventId, 'boot-b:1');
+      expect(durable.messages.map((item) => item.event.eventId), contains('boot-a:4'));
+      expect(durable.messages.map((item) => item.event.eventId), contains('gap:boot-b:cursor_reset:0'));
+      await second.frames.close();
+      await _until(() => sessions.length == 3);
+      expect(sessions.last.request.lastBootId, 'boot-b');
+      expect(sessions.last.request.lastEventSequence, Int64(1));
     },
   );
 

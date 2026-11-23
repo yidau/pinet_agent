@@ -1,4 +1,5 @@
 #include "event_store.hpp"
+#include "device_authorization.hpp"
 
 #include <openssl/sha.h>
 #include <sqlite3.h>
@@ -27,31 +28,42 @@ v1::MonitoringEvent event(v1::EventPriority priority, const std::string& boot,
     return value;
 }
 
-void verify_history(const std::string& path) {
+void verify_history() {
     using telemetry::EventStore;
-    std::string generation;
-    {
-        EventStore store(path, 3);
-        generation = store.generation();
-        check(generation.size() == 32, "invalid journal identity");
-        check(store.latest() == 0, "new database has a sequence");
-        store.append({event(v1::P0, "boot-A"), event(v1::P3, "boot-A", "same"),
-                      event(v1::P3, "boot-A", "same"), event(v1::P1, "boot-A")});
-        check(store.latest() == 3, "duplicate evidence advanced the cursor");
-    }
-    {
-        EventStore store(path, 3);
-        check(store.generation() == generation, "durable journal identity was lost");
-        store.append({event(v1::P2, "boot-B")});
-        check(store.latest() == 4, "durable sequence was lost");
-        const auto first = store.next(0);
-        const auto after_pruned = store.next(1);
-        const auto last = store.next(3);
-        check(first && first->event_id() == "boot-A:1", "critical event was pruned");
-        check(after_pruned && after_pruned->sequence() == 3, "low-priority gap not detected");
-        check(last && last->event_id() == "boot-B:4", "reboot event ID is incorrect");
-        check(!store.next(4), "returned an event beyond the watermark");
-    }
+    EventStore store("boot-A", 2);
+    check(store.read_after(0).oldest == 1, "empty buffer lower bound");
+    const auto duplicate = event(v1::P3, "", "same");
+    store.append({event(v1::P0, ""), duplicate, duplicate, event(v1::P2, "")});
+    const auto first = store.read_after(0);
+    check(first.latest == 3 && first.oldest == 2 && first.next && first.next->sequence() == 2,
+          "FIFO retention and evidence deduplication");
+    check(store.stats().count == 2 && store.stats().dropped == 1, "FIFO metrics");
+    check(store.read_after(2).next->event_id() == store.session_id() + ":3", "resumed event ID");
+    auto oversized = event(v1::P1, "");
+    oversized.set_description(std::string(EventStore::max_event_bytes + 1, 'x'));
+    store.append({oversized});
+    const auto tail = store.read_after(3);
+    check(tail.latest == 4 && !tail.next && store.stats().dropped == 2, "oversized tail gap");
+    store.append({event(v1::P2, "")});
+    check(store.read_after(3).next->sequence() == 5, "hole inside the replay range");
+
+    EventStore byte_limited("boot-A", 100, 700);
+    auto medium = event(v1::P1, "");
+    medium.set_description(std::string(450, 'x'));
+    byte_limited.append({medium, medium});
+    check(byte_limited.stats().count == 1 && byte_limited.stats().bytes <= 700 &&
+          byte_limited.read_after(0).oldest == 2, "byte-limited FIFO");
+    EventStore tiny("boot-A", 10, 32);
+    tiny.append({medium});
+    check(tiny.read_after(0).oldest == 2 && tiny.latest() == 1 && tiny.stats().bytes == 0,
+          "event larger than the configured budget");
+
+    EventStore restarted("boot-A");
+    EventStore rebooted("boot-B");
+    check(restarted.latest() == 0 && restarted.session_id() != store.session_id(), "service restart identity");
+    check(rebooted.latest() == 0 && rebooted.session_id().find("boot-B:") == 0, "system reboot identity");
+    restarted.append({medium});
+    check(restarted.read_after(0).next->event_id() == restarted.session_id() + ":1", "new session starts at one");
 }
 
 void verify_authorization(const std::string& path) {
@@ -91,7 +103,7 @@ int main() {
     const std::filesystem::path fixture(location);
     int result = 0;
     try {
-        verify_history((fixture / "history.db").string());
+        verify_history();
         verify_authorization((fixture / "registry.db").string());
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

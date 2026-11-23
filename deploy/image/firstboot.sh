@@ -163,7 +163,6 @@ for ((attempt = 0; attempt < 12; attempt++)); do
     sleep 1
 done
 ss -H -lnt 'sport = :9443' | grep -Fq '192.168.4.1'
-test -s /var/lib/piagent-telemetry/events.sqlite3
 services=(piagent-hotspot.service piagent-dhcp.service piagent-clock.socket
     piagent-enrollment-wifi.socket piagent-ble-time-sync.service piagent-kismet.service piagent-telemetry.service)
 for unit in "${services[@]}"; do
