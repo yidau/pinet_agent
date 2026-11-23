@@ -17,8 +17,9 @@ namespace pocketnet::telemetry {
 class EventStore {
 public:
     static constexpr std::size_t max_event_bytes = 60 * 1024;
+    // This budget is the sum of Protobuf ByteSizeLong() payload sizes, not heap RSS.
     explicit EventStore(std::string linux_boot_id, std::size_t max_events = 4096,
-                        std::size_t max_bytes = 16 * 1024 * 1024);
+                        std::size_t max_serialized_bytes = 16 * 1024 * 1024);
 
     struct Replay {
         std::uint64_t latest;
@@ -28,8 +29,10 @@ public:
     };
     struct Stats {
         std::size_t count;
-        std::size_t bytes;
+        std::size_t serialized_bytes;
         std::uint64_t dropped;
+        std::size_t event_limit;
+        std::size_t serialized_byte_limit;
     };
 
     void append(const std::vector<v1::MonitoringEvent>& events);
@@ -41,7 +44,7 @@ public:
 private:
     const std::string session_id_;
     const std::size_t max_events_;
-    const std::size_t max_bytes_;
+    const std::size_t max_serialized_bytes_;
     mutable std::mutex lock_;
     std::deque<v1::MonitoringEvent> events_;
     // Views refer to immutable strings in the deque and are erased before popping.

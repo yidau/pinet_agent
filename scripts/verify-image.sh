@@ -48,7 +48,7 @@ if grep -q 'not found' <<< "$dependencies"; then
     exit 1
 fi
 chroot "$root" /opt/pocketnet/python/bin/python -c 'import sys, cryptography, dbus_next, qrcode; assert sys.version_info[:2] == (3, 12); print(sys.version)'
-for package in kismet-core kismet-capture-linux-wifi; do
+for package in kismet-core kismet-capture-linux-wifi zram-tools; do
     chroot "$root" dpkg-query -W -f='${db:Status-Abbrev} ${Version}\n' "$package" | grep -E '^ii '
 done
 capture=/usr/bin/kismet_cap_linux_wifi
@@ -65,13 +65,22 @@ grep -qx 'Storage=volatile' "$root/etc/systemd/journald.conf.d/pocketnet.conf"
 grep -qx 'RuntimeMaxUse=32M' "$root/etc/systemd/journald.conf.d/pocketnet.conf"
 grep -qx 'WorkingDirectory=/run/piagent-kismet' "$unit_dir/piagent-kismet.service"
 grep -qx 'enable_logging=false' "$root/etc/kismet/piagent.conf"
-grep -qx 'httpd_session_db=/var/lib/piagent-kismet/.kismet/session.db' "$root/etc/kismet/piagent.conf"
+grep -qx 'httpd_session_db=/run/piagent-kismet/.kismet/session.db' "$root/etc/kismet/piagent.conf"
 grep -qx 'httpd_auth_file=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$root/etc/kismet/piagent.conf"
 if grep -q '^StateDirectory=' "$unit_dir/piagent-telemetry.service"; then
     echo 'Unexpected persistent telemetry directory.' >&2
     exit 1
 fi
-awk '$1 !~ /^#/ && $3 == "swap" { print "Review swap configuration:", $1 }' "$root/etc/fstab"
+if awk '$1 !~ /^#/ && NF >= 3 && $3 == "swap" { found=1 } END { exit !found }' "$root/etc/fstab"; then
+    echo 'Block-backed swap entry remains in /etc/fstab.' >&2
+    exit 1
+fi
+[[ -L "$unit_dir/swapfile.swap" && "$(readlink "$unit_dir/swapfile.swap")" == /dev/null ]]
+[[ -L "$unit_dir/dphys-swapfile.service" && "$(readlink "$unit_dir/dphys-swapfile.service")" == /dev/null ]]
+grep -qx 'ALGO=lz4' "$root/etc/default/zramswap"
+grep -qx 'PERCENT=25' "$root/etc/default/zramswap"
+grep -qx 'PRIORITY=100' "$root/etc/default/zramswap"
+systemctl --root="$root" is-enabled zramswap.service
 for unit in pocketnet-firstboot piagent-telemetry piagent-kismet piagent-wireless-manager piagent-ble-time-sync; do
     [[ -f "$root/etc/systemd/system/$unit.service" ]]
 done

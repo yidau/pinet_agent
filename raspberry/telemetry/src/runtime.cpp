@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <limits>
 #include <utility>
+#include <unistd.h>
 
 namespace pocketnet::telemetry {
 namespace {
@@ -23,6 +25,16 @@ v1::MonitoringEvent notice(const std::string& type, v1::EventPriority priority,
     event.set_source(source);
     event.set_description(description);
     return event;
+}
+
+std::uint64_t resident_set_bytes() {
+    std::ifstream statm("/proc/self/statm");
+    std::uint64_t total_pages = 0, resident_pages = 0;
+    if (!(statm >> total_pages >> resident_pages)) return 0;
+    (void)total_pages;
+    const long page_size = ::sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return 0;
+    return resident_pages * static_cast<std::uint64_t>(page_size);
 }
 
 bool same_notice(const v1::MonitoringEvent& lhs, const v1::MonitoringEvent& rhs) {
@@ -200,6 +212,7 @@ void Runtime::sample_wireless() {
 
 void Runtime::publish() {
     auto next_snapshot = Clock::now();
+    auto next_memory_report = Clock::now() + 60s;
     std::uint64_t sequence = 0;
     for (;;) {
         std::vector<v1::MonitoringEvent> batch;
@@ -232,6 +245,16 @@ void Runtime::publish() {
             delivery->set_dropped_events(delivery->dropped_events() + events_.stats().dropped);
             const std::lock_guard<std::mutex> guard(snapshot_lock_);
             snapshot_ = std::move(message);
+        }
+        if (Clock::now() >= next_memory_report) {
+            const auto stats = events_.stats();
+            std::clog << "RAM usage: telemetry_rss_bytes=" << resident_set_bytes()
+                      << " event_buffer_count=" << stats.count
+                      << " event_buffer_event_limit=" << stats.event_limit
+                      << " event_buffer_serialized_bytes=" << stats.serialized_bytes
+                      << " event_buffer_serialized_byte_limit=" << stats.serialized_byte_limit
+                      << " event_buffer_dropped=" << stats.dropped << '\\n';
+            next_memory_report = Clock::now() + 60s;
         }
     }
 }

@@ -8,6 +8,8 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
+MAX_REGISTERED_DEVICES = 5
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS devices (
     device_id TEXT PRIMARY KEY,
@@ -69,6 +71,13 @@ class Registry:
             enabled = connection.execute("SELECT value FROM settings WHERE name = 'registration_enabled'").fetchone()[0]
             if not register or not enabled:
                 raise ValueError("New device registration is closed")
+            # BEGIN IMMEDIATE serializes competing registrations. Revoking
+            # devices occupy a slot until their hotspot credential is disabled.
+            registered = connection.execute(
+                "SELECT COUNT(*) FROM devices WHERE status IN ('active', 'revoking')"
+            ).fetchone()[0]
+            if registered >= MAX_REGISTERED_DEVICES:
+                raise ValueError(f"Maximum of {MAX_REGISTERED_DEVICES} phones may be registered")
             device_id, wifi_id = uuid.uuid4().hex, uuid.uuid4().hex
             enable_wifi(wifi_id)
             connection.execute(

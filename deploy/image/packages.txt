@@ -8,6 +8,7 @@ rfkill
 libcap2-bin
 ca-certificates
 sqlite3
+zram-tools
 libcurl4
 libssl3
 libsqlite3-0

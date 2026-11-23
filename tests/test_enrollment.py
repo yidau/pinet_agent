@@ -2,6 +2,7 @@
 
 import hmac
 import json
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -184,3 +185,46 @@ class EnrollmentAcceptance(unittest.IsolatedAsyncioTestCase):
         self.registry.revoke(first["device_id"], lambda wifi_id: self.wifi("revoke", wifi_id))
         self.assertEqual(self.registry.authorize(second["token"]), second["device_id"])
         self.assertIsNotNone(await self.service.grant(SECOND))
+
+    def test_r6_registration_limit_is_five_and_revocation_releases_a_slot(self):
+        phones = [ec.generate_private_key(ec.SECP256R1()) for _ in range(5)]
+        rows = []
+        for index, phone in enumerate(phones):
+            rows.append(self.registry.activate(public_bytes(phone.public_key()), f"phone-{index}", register=True,
+                issue_token=lambda device_id: device_id + "A" * 11, enable_wifi=lambda _wifi_id: None))
+        self.assertEqual(len(self.registry.list_devices()), 5)
+        resumed = self.registry.activate(public_bytes(phones[0].public_key()), "phone-0", register=False,
+            issue_token=lambda device_id: device_id + "A" * 11,
+            enable_wifi=lambda _wifi_id: self.fail("resume must not issue a new Wi-Fi credential"))
+        self.assertEqual(resumed["device_id"], rows[0]["device_id"])
+        sixth = ec.generate_private_key(ec.SECP256R1())
+        with self.assertRaisesRegex(ValueError, "Maximum of 5 phones"):
+            self.registry.activate(public_bytes(sixth.public_key()), "phone-5", register=True,
+                issue_token=lambda device_id: device_id + "A" * 11, enable_wifi=lambda _wifi_id: None)
+        def fail_disable(_wifi_id):
+            raise RuntimeError("simulated hotspot failure")
+        with self.assertRaisesRegex(RuntimeError, "simulated hotspot failure"):
+            self.registry.revoke(rows[0]["device_id"], fail_disable)
+        with self.assertRaisesRegex(ValueError, "Maximum of 5 phones"):
+            self.registry.activate(public_bytes(sixth.public_key()), "phone-5", register=True,
+                issue_token=lambda device_id: device_id + "A" * 11, enable_wifi=lambda _wifi_id: None)
+        self.assertTrue(self.registry.revoke(rows[0]["device_id"], lambda _wifi_id: None))
+        accepted = self.registry.activate(public_bytes(sixth.public_key()), "phone-5", register=True,
+            issue_token=lambda device_id: device_id + "A" * 11, enable_wifi=lambda _wifi_id: None)
+        self.assertEqual(accepted["status"], "active")
+        self.assertEqual(sum(row["status"] in ("active", "revoking") for row in self.registry.list_devices()), 5)
+
+    def test_r7_concurrent_registration_never_exceeds_five(self):
+        phones = [ec.generate_private_key(ec.SECP256R1()) for _ in range(8)]
+        def register(index):
+            try:
+                self.registry.activate(public_bytes(phones[index].public_key()), f"concurrent-{index}", register=True,
+                    issue_token=lambda device_id: device_id + "B" * 11, enable_wifi=lambda _wifi_id: None)
+                return True
+            except ValueError as error:
+                if "Maximum of 5 phones" in str(error): return False
+                raise
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            accepted = list(executor.map(register, range(8)))
+        self.assertEqual(sum(accepted), 5)
+        self.assertEqual(sum(row["status"] in ("active", "revoking") for row in self.registry.list_devices()), 5)

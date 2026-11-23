@@ -1,0 +1,4 @@
+# PocketNet uses RAM-compressed swap only; never use the SD card as swap.
+ALGO=lz4
+PERCENT=25
+PRIORITY=100

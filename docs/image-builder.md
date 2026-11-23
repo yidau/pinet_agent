@@ -53,3 +53,22 @@
 构建器在 ARM64 chroot 中生成 Protobuf/gRPC 绑定并完成 C++ Release 编译。file 和 readelf 确认为 AArch64，目标 chroot 的 ldd 无缺失库。镜像验证器确认 Python 3.12.16、Kismet 2026-10-R1、首次启动与 SSH 单元、预设有线地址，以及根分区和启动分区文件系统。
 
 构建失败清理也实际验证过。软件源返回 HTTP 503 的一次构建结束后，losetup 和 findmnt 均未找到该工作 IMG 残留的 loop 或挂载点，日志保留在 WSL 缓存目录。烧录后的 SSH 登录、无线与 BLE 留作树莓派实机验收。
+
+## RAM-first storage and swap validation
+
+The image enables volatile journald, mounts /tmp as bounded tmpfs, and runs Kismet's HTTP session database under /run. Kismet authentication and device identity remain persistent. The image installs zram-tools with ALGO=lz4, PERCENT=25, and PRIORITY=100; block-backed swap entries are removed from /etc/fstab, and swapfile.swap / dphys-swapfile.service are masked.
+
+On a running device, verify:
+
+```bash
+findmnt /run /tmp /dev/shm
+swapon --show
+zramctl
+systemctl is-active zramswap.service
+systemctl show piagent-kismet.service -p MainPID
+pid=$(systemctl show piagent-kismet.service -p MainPID --value)
+grep -E '^(VmRSS|VmHWM):' "/proc/$pid/status"
+journalctl -u piagent-telemetry.service -b --since '2 minutes ago' --no-pager
+```
+
+Only /dev/zram* should appear in swapon --show. A block-backed swap device is a failed SD-card-write policy check. The EventStore's 16 MiB figure is serialized Protobuf payload, not total heap/RSS; compare the Telemetry RSS journal metric and Kismet's separate RSS.

@@ -22,10 +22,13 @@ std::string make_session_id(std::string boot) {
 }
 }  // namespace
 
-EventStore::EventStore(std::string linux_boot_id, std::size_t max_events, std::size_t max_bytes)
+EventStore::EventStore(std::string linux_boot_id, std::size_t max_events,
+                       std::size_t max_serialized_bytes)
     : session_id_(make_session_id(std::move(linux_boot_id))),
-      max_events_(max_events), max_bytes_(max_bytes) {
-    if (max_events_ == 0 || max_bytes_ == 0) throw std::invalid_argument("Empty telemetry buffer budget");
+      max_events_(max_events), max_serialized_bytes_(max_serialized_bytes) {
+    if (max_events_ == 0 || max_serialized_bytes_ == 0) {
+        throw std::invalid_argument("Empty telemetry buffer budget");
+    }
 }
 
 void EventStore::append(const std::vector<v1::MonitoringEvent>& events) {
@@ -39,12 +42,12 @@ void EventStore::append(const std::vector<v1::MonitoringEvent>& events) {
         assigned.set_boot_id(session_id_);
         assigned.set_event_id(session_id_ + ":" + std::to_string(sequence_));
         const auto bytes = assigned.ByteSizeLong();
-        if (bytes > max_event_bytes || bytes > max_bytes_) {
+        if (bytes > max_event_bytes || bytes > max_serialized_bytes_) {
             ++dropped_;
             continue;
         }
 
-        while (events_.size() >= max_events_ || bytes_ > max_bytes_ - bytes) {
+        while (events_.size() >= max_events_ || bytes_ > max_serialized_bytes_ - bytes) {
             const auto& oldest = events_.front();
             if (!oldest.evidence_id().empty()) evidence_.erase({oldest.source(), oldest.evidence_id()});
             bytes_ -= oldest.ByteSizeLong();
@@ -72,7 +75,7 @@ EventStore::Replay EventStore::read_after(std::uint64_t after) const {
 
 EventStore::Stats EventStore::stats() const {
     const std::lock_guard<std::mutex> guard(lock_);
-    return {events_.size(), bytes_, dropped_};
+    return {events_.size(), bytes_, dropped_, max_events_, max_serialized_bytes_};
 }
 
 }  // namespace pocketnet::telemetry

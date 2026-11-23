@@ -42,6 +42,16 @@ for service in piagent-clock piagent-enrollment-wifi piagent-telemetry piagent-w
 done
 install -m 0644 "$source_dir/deploy/systemd/hostapd.conf" "$root/etc/hostapd/piagent.conf"
 install -m 0644 "$source_dir/deploy/systemd/dnsmasq.conf" "$root/etc/piagent-dnsmasq.conf"
+install -D -m 0644 "$source_dir/raspberry/config/runtime/zramswap" "$root/etc/default/zramswap"
+
+# Remove block-backed swap entries from the image; PocketNet enables zram below.
+if [[ -f "$root/etc/fstab" ]]; then
+    awk '$1 !~ /^#/ && NF >= 3 && $3 == "swap" { next } { print }' \\
+        "$root/etc/fstab" > "$root/etc/fstab.pocketnet"
+    chmod --reference="$root/etc/fstab" "$root/etc/fstab.pocketnet"
+    chown --reference="$root/etc/fstab" "$root/etc/fstab.pocketnet"
+    mv -f "$root/etc/fstab.pocketnet" "$root/etc/fstab"
+fi
 if grep -qx '\[Policy\]' "$root/etc/bluetooth/main.conf"; then
     sed -i '/^AutoEnable=/d; /^\[Policy\]$/a AutoEnable=true' "$root/etc/bluetooth/main.conf"
 else
@@ -51,7 +61,8 @@ printf '%s\n' "$(date -u +%s)" > "$root/etc/pocketnet/build-epoch"
 chmod 0644 "$root/etc/pocketnet/build-epoch"
 
 systemd-sysusers --root="$root"
-systemctl --root="$root" mask hostapd.service
+systemctl --root="$root" mask hostapd.service swapfile.swap dphys-swapfile.service
+systemctl --root="$root" enable zramswap.service
 if [[ -e "$root/lib/systemd/system/kismet.service" || -e "$root/usr/lib/systemd/system/kismet.service" ]]; then
     systemctl --root="$root" mask kismet.service
 fi

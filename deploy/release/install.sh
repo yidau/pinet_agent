@@ -186,6 +186,9 @@ def managed_configuration(root, release):
             (release / "raspberry/config/kismet/piagent-kismet.service").read_bytes(),
         "etc/systemd/system/tmp.mount": (assets / "tmp.mount").read_bytes(),
         "etc/systemd/journald.conf.d/pocketnet.conf": (assets / "pocketnet-journald.conf").read_bytes(),
+        "etc/default/zramswap": (assets / "zramswap").read_bytes(),
+        "etc/systemd/system/swapfile.swap": "/dev/null",
+        "etc/systemd/system/dphys-swapfile.service": "/dev/null",
     }
     kismet = "etc/kismet/piagent.conf"
     template = (release / "raspberry/config/kismet/piagent.conf").read_bytes()
@@ -205,6 +208,20 @@ def managed_configuration(root, release):
             if fields[1:2] == ["/tmp"] and fields[2:3] != ["tmpfs"]:
                 raise ValueError("Resolve the existing fstab /tmp entry before applying the PocketNet mount")
     settings["etc/systemd/system/local-fs.target.wants/tmp.mount"] = "../tmp.mount"
+
+    # Remove existing fstab swap entries so systemd cannot reactivate SD swap.
+    fstab = root / "etc/fstab"
+    if fstab.is_file():
+        original = fstab.read_text()
+        filtered_lines = []
+        for line in original.splitlines(keepends=True):
+            fields = line.split("#", 1)[0].split()
+            if len(fields) >= 3 and fields[2] == "swap":
+                continue
+            filtered_lines.append(line)
+        filtered = "".join(filtered_lines)
+        if filtered != original:
+            settings["etc/fstab"] = filtered.encode()
     return settings
 
 
@@ -246,7 +263,27 @@ def configuration_units(paths):
             units.append("piagent-telemetry.service")
         if path.endswith("piagent-ble-time-sync.service.d/90-pocketnet-image.conf"):
             units.append("piagent-ble-time-sync.service")
+        if path.endswith("etc/default/zramswap"):
+            units.append("zramswap.service")
     return units
+
+
+def ensure_zram_tools(root, live):
+    if not live:
+        return
+    installed = subprocess.run(["dpkg-query", "-W", "-f=${db:Status-Abbrev}", "zram-tools"],
+                               text=True, capture_output=True, timeout=10)
+    if installed.returncode != 0 or not installed.stdout.startswith("ii "):
+        subprocess.run(["apt-get", "-o", "Dpkg::Use-Pty=0", "install", "-y", "--no-install-recommends", "zram-tools"],
+                       check=True, timeout=300)
+    active_swap = subprocess.run(["swapon", "--show=NAME", "--noheadings", "--raw"],
+                                 text=True, capture_output=True, check=True, timeout=10)
+    for name in active_swap.stdout.splitlines():
+        name = name.strip()
+        if name and not Path(name).name.startswith("zram"):
+            subprocess.run(["swapoff", name], check=True, timeout=120)
+    subprocess.run(["systemctl", "mask", "swapfile.swap", "dphys-swapfile.service"],
+                   check=True, timeout=20)
 
 
 def install(root, live, archive, expected_sha):
@@ -266,6 +303,7 @@ def install(root, live, archive, expected_sha):
             unpack(trusted_archive, payload)
             manifest = validate_payload(payload)
             validate_host(root, live, payload, manifest)
+            ensure_zram_tools(root, live)
             release = releases / manifest["version"]
             if release.is_symlink():
                 raise ValueError("Version directory may not be a symlink")
@@ -294,6 +332,10 @@ def install(root, live, archive, expected_sha):
                 if live and applied:
                     subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=20)
                 restart(units)
+                if live:
+                    subprocess.run(["systemctl", "enable", "zramswap.service"], check=True, timeout=20)
+                    if not active("zramswap.service"):
+                        subprocess.run(["systemctl", "start", "zramswap.service"], check=True, timeout=30)
                 place_updater(prefix, release / "install.sh")
             except BaseException:
                 if current_link(prefix) == selected:

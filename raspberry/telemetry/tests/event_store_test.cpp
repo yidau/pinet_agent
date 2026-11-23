@@ -51,11 +51,11 @@ void verify_history() {
     auto medium = event(v1::P1, "");
     medium.set_description(std::string(450, 'x'));
     byte_limited.append({medium, medium});
-    check(byte_limited.stats().count == 1 && byte_limited.stats().bytes <= 700 &&
+    check(byte_limited.stats().count == 1 && byte_limited.stats().serialized_bytes <= 700 &&
           byte_limited.read_after(0).oldest == 2, "byte-limited FIFO");
     EventStore tiny("boot-A", 10, 32);
     tiny.append({medium});
-    check(tiny.read_after(0).oldest == 2 && tiny.latest() == 1 && tiny.stats().bytes == 0,
+    check(tiny.read_after(0).oldest == 2 && tiny.latest() == 1 && tiny.stats().serialized_bytes == 0,
           "event larger than the configured budget");
 
     EventStore restarted("boot-A");
