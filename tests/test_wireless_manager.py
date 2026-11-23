@@ -27,8 +27,9 @@ def kismet_source(*, running=True, uuid=UUID):
 
 class WirelessRoleTests(unittest.TestCase):
     def setUp(self):
-        temporary = self.enterContext(tempfile.TemporaryDirectory())
-        self.root = Path(temporary)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
         self.hotspot = self.root / "hostapd.conf"
         self.hotspot.write_text("interface=wlan0\n", encoding="ascii")
         self.ap_phy = self.root / "wlan0" / "phy80211"

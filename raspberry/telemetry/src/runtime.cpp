@@ -1,14 +1,9 @@
 #include "runtime.hpp"
 
-#include <google/protobuf/util/json_util.h>
-#include <sys/stat.h>
-
 #include <algorithm>
 #include <chrono>
-#include <filesystem>
-#include <fstream>
+#include <exception>
 #include <iostream>
-#include <iterator>
 #include <iterator>
 #include <utility>
 
@@ -37,24 +32,6 @@ bool same_notice(const v1::MonitoringEvent& lhs, const v1::MonitoringEvent& rhs)
     return lhs.event_type() == rhs.event_type() && lhs.source() == rhs.source() &&
            lhs.bssid() == rhs.bssid() && lhs.description() == rhs.description();
 }
-
-void write_system_cache(const std::string& path, const v1::SystemMetrics& metrics) {
-    std::string json;
-    google::protobuf::util::JsonPrintOptions options;
-    options.preserve_proto_field_names = true;
-    if (!google::protobuf::util::MessageToJsonString(metrics, &json, options).ok()) {
-        throw std::runtime_error("Unable to serialize system snapshot");
-    }
-    const auto temporary = path + ".tmp";
-    {
-        std::ofstream file(temporary, std::ios::trunc);
-        file << json;
-        file.close();
-        if (!file) throw std::runtime_error("Unable to write system snapshot");
-    }
-    if (chmod(temporary.c_str(), 0644) != 0) throw std::runtime_error("Unable to share system snapshot");
-    std::filesystem::rename(temporary, path);
-}
 }  // namespace
 
 std::int64_t wall_ms() {
@@ -62,9 +39,8 @@ std::int64_t wall_ms() {
     return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
-Runtime::Runtime(EventStore& events, KismetCollector kismet, std::string boot_id, std::string system_cache)
-    : events_(events), kismet_(std::move(kismet)), boot_id_(std::move(boot_id)),
-      system_cache_(std::move(system_cache)) {
+Runtime::Runtime(EventStore& events, KismetCollector kismet, std::string boot_id)
+    : events_(events), kismet_(std::move(kismet)), boot_id_(std::move(boot_id)) {
     capture_.set_datasource_state("starting");
     capture_.set_coverage("unavailable");
     snapshot_.set_boot_id(boot_id_);
@@ -220,7 +196,6 @@ void Runtime::publish() {
     auto next_snapshot = Clock::now();
     std::uint64_t sequence = 0;
     bool journal_error = false;
-    bool cache_error = false;
     for (;;) {
         std::vector<v1::MonitoringEvent> batch;
         v1::MonitoringSnapshot message;
@@ -258,15 +233,6 @@ void Runtime::publish() {
             drops_ += batch.size();
         }
         if (message.has_sequence()) {
-            if (!system_cache_.empty() && message.system().has_sampled_at_ms()) {
-                try {
-                    write_system_cache(system_cache_, message.system());
-                    cache_error = false;
-                } catch (const std::exception&) {
-                    if (!cache_error) std::cerr << "Unable to publish the local system snapshot\n";
-                    cache_error = true;
-                }
-            }
             try {
                 message.set_latest_event_sequence(events_.latest());
             } catch (const std::exception&) {

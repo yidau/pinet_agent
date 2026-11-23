@@ -158,7 +158,6 @@ int main(int argc, char** argv) {
             setenv("PIAGENT_TELEMETRY_EVENTS", events_path.c_str(), 1);
             unsetenv("PIAGENT_KISMET_URL");
             unsetenv("PIAGENT_KISMET_API_KEY");
-            unsetenv("PIAGENT_TELEMETRY_SYSTEM_CACHE");
             execl(argv[1], argv[1], static_cast<char*>(nullptr));
             _exit(127);
         }

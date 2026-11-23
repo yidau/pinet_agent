@@ -21,6 +21,7 @@ enum TelemetryPhase {
 class TelemetryTarget {
   const TelemetryTarget({
     required this.host,
+    this.port = 9443,
     required this.deviceKey,
     required this.phoneId,
     required this.token,
@@ -30,6 +31,7 @@ class TelemetryTarget {
   factory TelemetryTarget.fromEnrollment(EnrollmentProfile profile) =>
       TelemetryTarget(
         host: profile.telemetryUrl.host,
+        port: profile.telemetryUrl.port,
         deviceKey: '${profile.fingerprint}/${profile.phoneId}',
         phoneId: profile.phoneId,
         token: profile.token,
@@ -37,6 +39,7 @@ class TelemetryTarget {
       );
 
   final String host;
+  final int port;
   final String deviceKey;
   final String phoneId;
   final String token;
@@ -45,6 +48,7 @@ class TelemetryTarget {
   bool sameSession(TelemetryTarget other) =>
       deviceKey == other.deviceKey &&
       host == other.host &&
+      port == other.port &&
       token == other.token &&
       caPem == other.caPem;
 }
@@ -58,7 +62,7 @@ class _GrpcTransport implements TelemetryTransport {
   _GrpcTransport(this.target)
     : _channel = ClientChannel(
         target.host,
-        port: 9443,
+        port: target.port,
         options: ChannelOptions(
           connectTimeout: const Duration(seconds: 6),
           credentials: ChannelCredentials.secure(

@@ -10,7 +10,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../telemetry/proto/monitoring.pbgrpc.dart';
-import '../network.dart';
 import 'enrollment_client.dart';
 import 'enrollment_profile.dart';
 

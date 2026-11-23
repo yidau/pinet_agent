@@ -4,18 +4,93 @@ import 'dart:io';
 
 import 'package:fixnum/fixnum.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:grpc/grpc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path/path.dart' as path;
+import 'package:piagent/enrollment/enrollment_profile.dart';
+import 'package:piagent/main.dart';
 import 'package:piagent/telemetry/dashboard_page.dart';
 import 'package:piagent/telemetry/message_page.dart';
 import 'package:piagent/telemetry/message_repository.dart';
-import 'package:piagent/telemetry/proto/monitoring.pb.dart';
+import 'package:piagent/telemetry/proto/monitoring.pbgrpc.dart';
 import 'package:piagent/telemetry/telemetry_connection.dart';
 import 'package:piagent/ui/console_style.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' as ffi;
 import 'package:sqlite3/open.dart' as sqlite;
 
 void main() {
+  test(
+    'the enrolled CA and bearer token open a TLS telemetry stream',
+    () async {
+      final fixtures = Directory('test/fixtures');
+      final ca = await File(path.join(fixtures.path, 'loopback-ca.pem'))
+          .readAsString();
+      final profile = EnrollmentProfile.decode(
+        {
+          'device_id': 'fixture-phone',
+          'token': 'fixture-token-abcdefghijklmnopqrstuvwxyz',
+          'ssid': 'PocketNet fixture',
+          'psk': 'fixture-password',
+          'telemetry_url': 'https://127.0.0.1:9443',
+          'ca_pem': ca,
+        },
+        piId: 'fixture-pi',
+        fingerprint: 'sha256:${'a' * 64}',
+        deviceName: 'Fixture phone',
+      );
+      final enrolled = TelemetryTarget.fromEnrollment(profile);
+      expect(enrolled.port, 9443);
+
+      final service = _LoopbackTelemetryService(enrolled.token);
+      final server = Server.create(services: [service]);
+      await server.serve(
+        address: InternetAddress.loopbackIPv4,
+        port: 0,
+        security: ServerTlsCredentials(
+          certificate: await File(
+            path.join(fixtures.path, 'loopback-server.pem'),
+          ).readAsBytes(),
+          privateKey: await File(
+            path.join(fixtures.path, 'loopback-server-key.pem'),
+          ).readAsBytes(),
+        ),
+      );
+      addTearDown(() async {
+        service.finish();
+        await server.shutdown();
+      });
+
+      final feed = TelemetryConnection(repository: _repository());
+      addTearDown(feed.dispose);
+      feed.useTarget(
+        TelemetryTarget(
+          host: enrolled.host,
+          port: server.port!,
+          deviceKey: enrolled.deviceKey,
+          phoneId: enrolled.phoneId,
+          token: enrolled.token,
+          caPem: enrolled.caPem,
+        ),
+      );
+
+      await _until(() => feed.snapshot != null);
+      expect(service.deviceId, profile.phoneId);
+      expect(feed.snapshot!.bootId, 'loopback-boot');
+      expect(feed.phase, TelemetryPhase.live);
+    },
+  );
+
+  testWidgets('AI tab displays its deferred feature placeholder', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const PocketNetApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('AI（暂缓）'));
+    await tester.pumpAndSettle();
+    expect(find.text('AI 功能暂缓开发'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test(
     'telemetry resumes after a gap with the saved sequence and unread state',
     () async {
@@ -251,5 +326,34 @@ class _MemoryTransport implements TelemetryTransport {
   @override
   Future<void> close() async {
     if (!frames.isClosed) await frames.close();
+  }
+}
+
+class _LoopbackTelemetryService extends TelemetryServiceBase {
+  _LoopbackTelemetryService(this.token);
+
+  final String token;
+  final _finished = Completer<void>();
+  String? deviceId;
+
+  void finish() => _finished.complete();
+
+  @override
+  Stream<TelemetryMessage> subscribe(
+    ServiceCall call,
+    SubscribeRequest request,
+  ) async* {
+    if (call.clientMetadata?['authorization'] != 'Bearer $token') {
+      throw const GrpcError.unauthenticated('Invalid fixture credentials');
+    }
+    deviceId = request.deviceId;
+    yield TelemetryMessage(
+      snapshot: MonitoringSnapshot(
+        bootId: 'loopback-boot',
+        schemaVersion: 1,
+        sequence: Int64(1),
+      ),
+    );
+    await _finished.future;
   }
 }
