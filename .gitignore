@@ -1,5 +1,8 @@
 .venv/
 .local-tools/
+/dist/
+/.dist.*/
+/.dist-previous.*/
 __pycache__/
 *.py[cod]
 .env

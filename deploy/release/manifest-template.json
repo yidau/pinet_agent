@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "ubuntu_release": "22.04",
+  "architecture": "arm64",
+  "build_type": "Release"
+}

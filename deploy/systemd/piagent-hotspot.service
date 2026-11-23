@@ -1,0 +1,15 @@
+[Unit]
+Description=PocketNet Wi-Fi hotspot
+BindsTo=sys-subsystem-net-devices-wlan0.device
+After=sys-subsystem-net-devices-wlan0.device
+
+[Service]
+ExecStartPre=/usr/sbin/rfkill unblock wifi
+ExecStartPre=/usr/sbin/ip link set wlan0 up
+ExecStartPre=/usr/sbin/ip address replace 192.168.4.1/24 dev wlan0
+ExecStart=/usr/sbin/hostapd /etc/hostapd/piagent.conf
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=PocketNet hotspot DHCP
+Requires=piagent-hotspot.service
+After=piagent-hotspot.service
+PartOf=piagent-hotspot.service
+
+[Service]
+RuntimeDirectory=piagent-dhcp
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/piagent-dnsmasq.conf
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target

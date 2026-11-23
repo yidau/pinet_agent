@@ -32,6 +32,6 @@ The phone connects to the C++ gRPC service using the pinned CA and its per-devic
 
 ## Current deployment status
 
-The source tree contains the application and service definitions. A complete Ubuntu 22.04 ARM64 offline image builder is a separate packaging task; do not assume the current repository automatically creates a flashable image.
+See the [Ubuntu 22.04 ARM64 image builder](docs/image-builder.md) for building a development image, configuring wired SSH at `192.168.77.2`, and installing software updates.
 
 See [V1 telemetry](docs/v1.0-telemetry.md) and [wireless manager](docs/v1.0-wireless-manager.md) for runtime details.

@@ -99,6 +99,14 @@ def install(*args):
     run("install", *args)
 
 
+def install_service():
+    modules = Path("/usr/local/lib/piagent-wireless/raspberry/wireless")
+    install("-d", "-m", "0755", modules)
+    for file in ("__init__.py", "kismet_adapter.py", "wireless_manager.py"):
+        install("-m", "0644", ROOT / "raspberry/wireless" / file, modules / file)
+    install("-m", "0644", HERE / MONITOR_UNIT, Path("/etc/systemd/system") / MONITOR_UNIT)
+
+
 def setup(args):
     if os.geteuid() != 0:
         raise SystemExit("Run monitor provisioning with sudo.")
@@ -118,11 +126,8 @@ def setup(args):
             raise SystemExit("The dedicated Kismet credential could not authorize datasource management.")
     subprocess.run(["systemd-sysusers", "-"], text=True, check=True,
                    input='g kismet -\nu piagent-wireless - "PocketNet wireless datasource manager"\n')
-    modules = Path("/usr/local/lib/piagent-wireless/raspberry/wireless")
-    install("-d", "-m", "0755", modules)
-    for file in ("__init__.py", "kismet_adapter.py", "wireless_manager.py"):
-        install("-m", "0644", ROOT / "raspberry/wireless" / file, modules / file)
-    install("-m", "0644", HERE / MONITOR_UNIT, Path("/etc/systemd/system") / MONITOR_UNIT)
+    if not args.runtime_only:
+        install_service()
     link = (f"[Match]\nPath={link_path}\nDriver={config.driver}\n"
             f"Property=ID_BUS=usb ID_VENDOR_ID={config.vendor} ID_MODEL_ID={config.product}\n"
             f"\n[Link]\nNamePolicy=\nName={MONITOR_INTERFACE}\n")
@@ -146,6 +151,7 @@ if __name__ == "__main__":
     parser.add_argument("--product", required=True, help="Four hexadecimal digits from idProduct.")
     parser.add_argument("--port", required=True, help="Exact kernel USB device name, e.g. 1-1.2.")
     parser.add_argument("--driver", required=True, help="Driver name confirmed for this radio.")
+    parser.add_argument("--runtime-only", action="store_true", help="Use the image's preinstalled manager service.")
     try:
         setup(parser.parse_args())
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:

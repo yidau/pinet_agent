@@ -1,0 +1,15 @@
+openssh-server
+bluez
+hostapd
+dnsmasq-base
+iw
+iproute2
+rfkill
+libcap2-bin
+ca-certificates
+sqlite3
+libcurl4
+libssl3
+libsqlite3-0
+libprotobuf23
+libgrpc++1

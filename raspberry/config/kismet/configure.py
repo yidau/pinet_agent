@@ -61,7 +61,14 @@ def create_key(port, headers, role):
     return body.strip().decode("ascii")
 
 
-def setup(port):
+def install_service(port):
+    config = Path("/etc/kismet/piagent.conf")
+    config.write_text((HERE / "piagent.conf").read_text() + f"\nhttpd_port={port}\n")
+    run("install", "-m", "0644", HERE / UNIT, Path("/etc/systemd/system") / UNIT)
+    run("systemctl", "daemon-reload")
+
+
+def setup(port, *, runtime_only=False):
     import pwd
 
     if not Path("/usr/bin/kismet").is_file():
@@ -69,7 +76,7 @@ def setup(port):
     if not 1024 <= port <= 65535:
         raise SystemExit("Choose an unprivileged HTTP port between 1024 and 65535.")
     subprocess.run(["systemd-sysusers", "-"], text=True, check=True,
-                   input='u piagent-kismet - "PocketNet Kismet" /var/lib/piagent-kismet\\n')
+                   input='u piagent-kismet - "PocketNet Kismet" /var/lib/piagent-kismet\n')
     owner = pwd.getpwnam("piagent-kismet")
     auth = STATE / ".kismet" / "kismet_httpd.conf"
     for directory in (STATE, auth.parent):
@@ -77,10 +84,8 @@ def setup(port):
     if not auth.exists():
         write_private(auth, f"httpd_username=piagent-admin\nhttpd_password={secrets.token_hex(32)}\n", owner)
     run("install", "-d", "-m", "0700", ENV.parent)
-    config = Path("/etc/kismet/piagent.conf")
-    config.write_text((HERE / "piagent.conf").read_text() + f"\nhttpd_port={port}\n")
-    run("install", "-m", "0644", HERE / UNIT, Path("/etc/systemd/system") / UNIT)
-    run("systemctl", "daemon-reload")
+    if not runtime_only:
+        install_service(port)
     run("systemctl", "enable", UNIT)
     run("systemctl", "restart", UNIT)
 
@@ -114,6 +119,8 @@ if __name__ == "__main__":
         raise SystemExit("Run provisioning with sudo.")
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, help="Local Kismet port (defaults to the installed package configuration).")
+    parser.add_argument("--runtime-only", action="store_true", help="Use the image's preinstalled unit and configuration.")
     args = parser.parse_args()
-    port = args.port if args.port is not None else int(read_fields(Path("/etc/kismet/kismet_httpd.conf"))["httpd_port"])
-    setup(port)
+    config_path = Path("/etc/kismet/piagent.conf" if args.runtime_only else "/etc/kismet/kismet_httpd.conf")
+    port = args.port if args.port is not None else int(read_fields(config_path)["httpd_port"])
+    setup(port, runtime_only=args.runtime_only)

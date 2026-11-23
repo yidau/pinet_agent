@@ -1,0 +1,14 @@
+[Unit]
+Description=Initialize PocketNet device identity and services
+Wants=systemd-sysusers.service
+After=local-fs.target systemd-sysusers.service
+ConditionPathExists=!/var/lib/pocketnet/firstboot-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pocketnet/firstboot.sh
+TimeoutStartSec=120s
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
