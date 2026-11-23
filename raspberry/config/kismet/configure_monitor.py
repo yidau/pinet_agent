@@ -23,8 +23,8 @@ from raspberry.wireless.wireless_manager import (  # noqa: E402
 )
 
 
-CONFIG = ENV.parent / "monitor.json"
-KEY = ENV.parent / "monitor.key"
+CONFIG = Path("/etc/piagent-kismet/monitor.json")
+KEY = Path("/run/piagent-kismet/monitor.key")
 KISMET_CONFIG = Path("/etc/kismet/piagent.conf")
 LINK = Path("/etc/systemd/network/10-piagent-monitor.link")
 MONITOR_UNIT = "piagent-wireless-manager.service"

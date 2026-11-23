@@ -169,5 +169,8 @@ for unit in "${services[@]}"; do
     systemctl is-active --quiet "$unit"
 done
 systemctl enable bluetooth.service "${services[@]}"
+# On later boots Kismet's RAM session database is empty; regenerate its API keys
+# before Telemetry and the wireless manager load their runtime credentials.
+systemctl enable piagent-kismet-provision.service
 touch "$state/firstboot-complete"
 sync -f "$state"

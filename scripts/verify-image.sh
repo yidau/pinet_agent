@@ -67,6 +67,9 @@ grep -qx 'WorkingDirectory=/run/piagent-kismet' "$unit_dir/piagent-kismet.servic
 grep -qx 'enable_logging=false' "$root/etc/kismet/piagent.conf"
 grep -qx 'httpd_session_db=/run/piagent-kismet/.kismet/session.db' "$root/etc/kismet/piagent.conf"
 grep -qx 'httpd_auth_file=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$root/etc/kismet/piagent.conf"
+grep -qx 'EnvironmentFile=-/run/piagent-kismet/client.env' "$unit_dir/piagent-telemetry.service"
+grep -qx 'LoadCredential=monitor.key:/run/piagent-kismet/monitor.key' "$unit_dir/piagent-wireless-manager.service"
+grep -qx 'ExecStart=/opt/pocketnet/python/bin/python3.12 -B /opt/pocketnet/current/raspberry/config/kismet/configure.py --runtime-only --provision-only' "$unit_dir/piagent-kismet-provision.service"
 grep -qx 'ReadWritePaths=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$unit_dir/piagent-kismet.service"
 if grep -q '^StateDirectory=' "$unit_dir/piagent-telemetry.service"; then
     echo 'Unexpected persistent telemetry directory.' >&2
@@ -82,7 +85,7 @@ grep -qx 'ALGO=lz4' "$root/etc/default/zramswap"
 grep -qx 'PERCENT=25' "$root/etc/default/zramswap"
 grep -qx 'PRIORITY=100' "$root/etc/default/zramswap"
 systemctl --root="$root" is-enabled zramswap.service
-for unit in pocketnet-firstboot piagent-telemetry piagent-kismet piagent-wireless-manager piagent-ble-time-sync; do
+for unit in pocketnet-firstboot piagent-telemetry piagent-kismet piagent-kismet-provision piagent-wireless-manager piagent-ble-time-sync; do
     [[ -f "$root/etc/systemd/system/$unit.service" ]]
 done
 if [[ "$ENABLE_FIRST_BOOT" == true ]]; then

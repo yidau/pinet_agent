@@ -1,0 +1,23 @@
+[Unit]
+Description=Refresh volatile PocketNet Kismet API credentials
+Requires=piagent-kismet.service
+After=piagent-kismet.service
+PartOf=piagent-kismet.service
+Before=piagent-wireless-manager.service piagent-telemetry.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/pocketnet/current
+ExecStart=/opt/pocketnet/python/bin/python3.12 -B /opt/pocketnet/current/raspberry/config/kismet/configure.py --runtime-only --provision-only
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/run/piagent-kismet
+RestrictAddressFamilies=AF_UNIX AF_INET
+
+[Install]
+WantedBy=multi-user.target

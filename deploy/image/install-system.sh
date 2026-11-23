@@ -31,7 +31,7 @@ install -m 0644 "$source_dir/deploy/systemd/piagent-hotspot.service" \
 
 for service in raspberry/config/time-sync/{piagent-ble-time-sync.service,piagent-clock.service,piagent-clock.socket} \
     raspberry/config/enrollment/{piagent-enrollment-wifi.service,piagent-enrollment-wifi.socket} \
-    raspberry/config/kismet/piagent-wireless-manager.service; do
+    raspberry/config/kismet/piagent-wireless-manager.service raspberry/config/kismet/piagent-kismet-provision.service; do
     install -m 0644 "$source_dir/$service" "$unit_dir/"
 done
 install -m 0644 "$source_dir/raspberry/config/time-sync/piagent-time-sync.sysusers.conf" \

@@ -15,7 +15,9 @@ import time
 
 HERE = Path(__file__).resolve().parent
 STATE = Path("/var/lib/piagent-kismet")
-ENV = Path("/etc/piagent-kismet/client.env")
+ENV = Path("/run/piagent-kismet/client.env")
+MONITOR_CONFIG = Path("/etc/piagent-kismet/monitor.json")
+MONITOR_KEY = Path("/run/piagent-kismet/monitor.key")
 UNIT = "piagent-kismet.service"
 
 
@@ -72,6 +74,56 @@ def install_service(port):
     run("systemctl", "daemon-reload")
 
 
+def provision_api_keys(port, headers):
+    """Recreate Kismet API keys when its volatile HTTP session DB is empty."""
+    run("install", "-d", "-m", "0700", ENV.parent)
+    key = read_fields(ENV).get("PIAGENT_KISMET_API_KEY", "") if ENV.exists() else ""
+    if not key or api(port, "/datasource/all_sources.json", key_headers(port, key))[0] != 200:
+        key = create_key(port, headers, "readonly")
+        if api(port, "/datasource/all_sources.json", key_headers(port, key))[0] != 200:
+            raise SystemExit("The new readonly Kismet credential failed verification.")
+    contents = f"PIAGENT_KISMET_URL=http://127.0.0.1:{port}\nPIAGENT_KISMET_API_KEY={key}\n"
+    if not ENV.exists() or ENV.read_text() != contents:
+        write_private(ENV, contents)
+
+    # The datasource manager needs an admin token only when a USB monitor radio
+    # has been assigned. The token lives in /run alongside the volatile Kismet DB.
+    if MONITOR_CONFIG.exists():
+        admin_key = MONITOR_KEY.read_text(encoding="ascii").strip() if MONITOR_KEY.exists() else ""
+        if not admin_key or api(port, "/auth/apikey/list.json", key_headers(port, admin_key))[0] != 200:
+            admin_key = create_key(port, headers, "admin")
+            if api(port, "/auth/apikey/list.json", key_headers(port, admin_key))[0] != 200:
+                raise SystemExit("The new Kismet datasource-management credential failed verification.")
+        if not MONITOR_KEY.exists() or MONITOR_KEY.read_text(encoding="ascii").strip() != admin_key:
+            write_private(MONITOR_KEY, admin_key + "\n")
+
+
+def wait_for_api(port, headers):
+    for attempt in range(25):
+        try:
+            status, _ = api(port, "/system/status.json", headers)
+        except (OSError, http.client.HTTPException):
+            status = 0
+        if status == 200:
+            return
+        if status in (401, 403) or attempt == 24:
+            raise SystemExit(f"Kismet startup or local authentication failed (HTTP {status}). See journalctl -u {UNIT}.")
+        time.sleep(0.4)
+
+
+def provision_only(port):
+    """Refresh volatile Kismet API credentials without restarting Kismet."""
+    auth = STATE / ".kismet" / "kismet_httpd.conf"
+    if not auth.is_file():
+        raise SystemExit("Persistent Kismet authentication configuration is missing.")
+    fields = read_fields(auth)
+    login = (fields["httpd_username"] + ":" + fields["httpd_password"]).encode()
+    headers = {"Authorization": "Basic " + base64.b64encode(login).decode(),
+               "Content-Type": "application/json"}
+    wait_for_api(port, headers)
+    provision_api_keys(port, headers)
+
+
 def setup(port, *, runtime_only=False):
     import pwd
 
@@ -97,25 +149,8 @@ def setup(port, *, runtime_only=False):
     login = (auth_fields["httpd_username"] + ":" + auth_fields["httpd_password"]).encode()
     headers = {"Authorization": "Basic " + base64.b64encode(login).decode(),
                "Content-Type": "application/json"}
-    for attempt in range(25):
-        try:
-            status, _ = api(port, "/system/status.json", headers)
-        except (OSError, http.client.HTTPException):
-            status = 0
-        if status == 200:
-            break
-        if status in (401, 403) or attempt == 24:
-            raise SystemExit(f"Kismet startup or local authentication failed (HTTP {status}). See journalctl -u {UNIT}.")
-        time.sleep(0.4)
-
-    key = read_fields(ENV).get("PIAGENT_KISMET_API_KEY", "") if ENV.exists() else ""
-    if not key or api(port, "/datasource/all_sources.json", key_headers(port, key))[0] != 200:
-        key = create_key(port, headers, "readonly")
-        if api(port, "/datasource/all_sources.json", key_headers(port, key))[0] != 200:
-            raise SystemExit("The new readonly credential failed verification.")
-    contents = f"PIAGENT_KISMET_URL=http://127.0.0.1:{port}\nPIAGENT_KISMET_API_KEY={key}\n"
-    if not ENV.exists() or ENV.read_text() != contents:
-        write_private(ENV, contents)
+    wait_for_api(port, headers)
+    provision_api_keys(port, headers)
     run("systemctl", "daemon-reload")
     print(f"Kismet ready on loopback port {port}. The C++ telemetry service reads the readonly Kismet credentials from its environment file.")
 
@@ -126,7 +161,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, help="Local Kismet port (defaults to the installed package configuration).")
     parser.add_argument("--runtime-only", action="store_true", help="Use the image's preinstalled unit and configuration.")
+    parser.add_argument("--provision-only", action="store_true",
+                        help="Refresh volatile Kismet API keys without restarting Kismet.")
     args = parser.parse_args()
     config_path = Path("/etc/kismet/piagent.conf" if args.runtime_only else "/etc/kismet/kismet_httpd.conf")
     port = args.port if args.port is not None else int(read_fields(config_path)["httpd_port"])
-    setup(port, runtime_only=args.runtime_only)
+    if args.provision_only:
+        provision_only(port)
+    else:
+        setup(port, runtime_only=args.runtime_only)
