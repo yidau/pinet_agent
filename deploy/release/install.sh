@@ -186,6 +186,8 @@ def managed_configuration(root, release):
         "etc/systemd/system/piagent-telemetry.service": (assets / "piagent-telemetry.service").read_bytes(),
         "etc/systemd/system/piagent-ble-time-sync.service.d/90-pocketnet-image.conf":
             (assets / "piagent-ble-time-sync.conf").read_bytes(),
+        "etc/systemd/system/piagent-telemetry.service.d/90-pocketnet-image.conf":
+            (assets / "piagent-telemetry.conf").read_bytes(),
         "etc/systemd/system/piagent-kismet.service":
             (release / "raspberry/config/kismet/piagent-kismet.service").read_bytes(),
         "etc/systemd/system/piagent-kismet-provision.service":
@@ -273,7 +275,7 @@ def configuration_units(paths):
             units.append("piagent-kismet-provision.service")
         if path.endswith("piagent-wireless-manager.service"):
             units.append("piagent-wireless-manager.service")
-        if path.endswith("piagent-telemetry.service"):
+        if path.endswith(("piagent-telemetry.service", "piagent-telemetry.service.d/90-pocketnet-image.conf")):
             units.append("piagent-telemetry.service")
         if path.endswith("piagent-ble-time-sync.service.d/90-pocketnet-image.conf"):
             units.append("piagent-ble-time-sync.service")

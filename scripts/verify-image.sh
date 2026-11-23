@@ -70,6 +70,8 @@ grep -qx 'httpd_auth_file=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$r
 grep -qx 'EnvironmentFile=-/run/piagent-kismet/client.env' "$unit_dir/piagent-telemetry.service"
 grep -qx 'LoadCredential=monitor.key:/run/piagent-kismet/monitor.key' "$unit_dir/piagent-wireless-manager.service"
 grep -qx 'ExecStart=/opt/pocketnet/python/bin/python3.12 -B /opt/pocketnet/current/raspberry/config/kismet/configure.py --runtime-only --provision-only' "$unit_dir/piagent-kismet-provision.service"
+grep -qx 'Requires=piagent-hotspot.service piagent-kismet-provision.service' "$unit_dir/piagent-telemetry.service.d/90-pocketnet-image.conf"
+grep -qx 'PartOf=piagent-kismet-provision.service' "$unit_dir/piagent-telemetry.service.d/90-pocketnet-image.conf"
 grep -qx 'ReadWritePaths=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$unit_dir/piagent-kismet.service"
 if grep -q '^StateDirectory=' "$unit_dir/piagent-telemetry.service"; then
     echo 'Unexpected persistent telemetry directory.' >&2
