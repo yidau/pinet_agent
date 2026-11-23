@@ -1,0 +1,134 @@
+syntax = "proto2";
+
+package pocketnet.v1;
+
+service TelemetryService {
+  rpc Subscribe(SubscribeRequest) returns (stream TelemetryMessage);
+}
+
+message SubscribeRequest {
+  optional string device_id = 1;
+  optional uint64 last_event_sequence = 2;
+  optional string last_boot_id = 3;
+}
+
+message TelemetryMessage {
+  oneof payload {
+    MonitoringSnapshot snapshot = 1;
+    MonitoringEvent event = 2;
+    HistoryGap history_gap = 3;
+  }
+}
+
+message HistoryGap {
+  optional string boot_id = 1;
+  optional uint64 through_event_sequence = 2;
+  optional string reason = 3;
+}
+
+message MonitoringSnapshot {
+  optional string boot_id = 1;
+  optional uint64 sequence = 2;
+  optional int64 timestamp_ms = 3;
+  optional SystemMetrics system = 4;
+  optional CaptureMetrics capture = 5;
+  optional WirelessSummary wireless = 6;
+  optional uint32 schema_version = 7;
+  optional uint64 latest_event_sequence = 8;
+  optional DeliveryMetrics delivery = 9;
+}
+
+message SystemMetrics {
+  optional float cpu_usage = 1;
+  optional uint64 memory_total_bytes = 2;
+  optional uint64 memory_available_bytes = 3;
+  optional float temperature_c = 4;
+  optional float cpu_psi_some_avg10 = 5;
+  optional float memory_psi_some_avg10 = 6;
+  optional uint64 swap_total_bytes = 7;
+  optional uint64 swap_free_bytes = 8;
+  optional float cpu_frequency_mhz = 9;
+  optional double disk_read_bytes_per_second = 10;
+  optional double disk_write_bytes_per_second = 11;
+  optional double disk_reads_per_second = 12;
+  optional double disk_writes_per_second = 13;
+  optional double disk_busy_ms_per_second = 14;
+  optional Pressure cpu_pressure = 15;
+  optional Pressure memory_pressure = 16;
+  optional Pressure io_pressure = 17;
+  optional int64 sampled_at_ms = 18;
+  optional uint64 memory_used_bytes = 19;
+}
+
+message Pressure {
+  optional float some_avg10 = 1;
+  optional float some_avg60 = 2;
+  optional float full_avg10 = 3;
+  optional float full_avg60 = 4;
+}
+
+message CaptureMetrics {
+  optional bool kismet_running = 1;
+  optional bool datasource_running = 2;
+  optional string datasource_state = 3;
+  optional uint64 packets_per_second = 4;
+  optional uint64 processed_packets_per_second = 5;
+  optional uint64 backlog = 6;
+  optional uint64 dropped_packets = 7;
+  optional string coverage = 8;
+  optional int64 sampled_at_ms = 9;
+  optional string reason = 10;
+  optional string current_channel = 11;
+  optional bool datasource_paused = 12;
+  optional bool datasource_error = 13;
+  optional uint64 tracked_devices = 14;
+  optional string packet_statistics_source = 15;
+  optional string datasource_uuid = 16;
+}
+
+message WirelessSummary {
+  optional uint32 ap_count = 1;
+  optional uint32 client_count = 2;
+  repeated PriorityAP priority_aps = 3;
+  optional bool truncated = 4;
+  optional int64 sampled_at_ms = 5;
+  optional string coverage = 6;
+}
+
+message PriorityAP {
+  optional string bssid = 1;
+  optional string ssid = 2;
+  optional string channel = 3;
+  optional float rssi_dbm = 4;
+  optional string security = 5;
+  optional uint64 frequency_khz = 6;
+  optional int64 first_seen_ms = 7;
+  optional int64 last_seen_ms = 8;
+}
+
+enum EventPriority {
+  P0 = 0;
+  P1 = 1;
+  P2 = 2;
+  P3 = 3;
+}
+
+message MonitoringEvent {
+  optional string boot_id = 1;
+  optional string event_id = 2;
+  optional uint64 sequence = 3;
+  optional int64 timestamp_ms = 4;
+  optional string event_type = 5;
+  optional EventPriority priority = 6;
+  optional string source = 7;
+  optional string bssid = 8;
+  optional string description = 9;
+  optional string evidence_id = 10;
+  optional uint32 occurrences = 11;
+}
+
+message DeliveryMetrics {
+  optional uint64 dropped_events = 1;
+  optional uint64 merged_events = 2;
+  optional uint32 pending_events = 3;
+}

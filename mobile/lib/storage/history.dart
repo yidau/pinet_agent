@@ -34,38 +34,19 @@ class ChatEntry {
 class History {
   Future<Database>? _opening;
 
-  Future<Database> _open() => _opening ??= _connect();
-
-  Future<Database> _connect() async {
-    final DatabaseFactory factory;
-    final String directory;
-    if (Platform.isWindows) {
-      final localAppData = Platform.environment['LOCALAPPDATA'];
-      if (localAppData == null || localAppData.isEmpty) {
-        throw StateError('LOCALAPPDATA is unavailable');
-      }
-      final historyDir = Directory(path.join(localAppData, 'PiAgent'));
-      await historyDir.create(recursive: true);
-      factory = _windowsDatabaseFactory;
-      directory = historyDir.path;
-    } else {
-      factory = databaseFactory;
-      directory = await factory.getDatabasesPath();
-    }
-    return factory.openDatabase(
-      path.join(directory, 'piagent.db'),
-      options: OpenDatabaseOptions(
-        version: 1,
-        onCreate: (db, _) => db.execute('''
+  Future<Database> _open() => _opening ??= openPiAgentDatabase(
+    'piagent.db',
+    OpenDatabaseOptions(
+      version: 1,
+      onCreate: (db, _) => db.execute('''
           CREATE TABLE entries (
             id INTEGER PRIMARY KEY,
             role TEXT NOT NULL,
             text TEXT NOT NULL
           )
         '''),
-      ),
-    );
-  }
+    ),
+  );
 
   Future<List<ChatEntry>> load() async {
     final db = await _open();
@@ -80,4 +61,26 @@ class History {
     final db = await _open();
     await db.insert('entries', {'role': entry.role, 'text': entry.text});
   }
+}
+
+Future<Database> openPiAgentDatabase(
+  String fileName,
+  OpenDatabaseOptions options,
+) async {
+  final DatabaseFactory factory;
+  final String directory;
+  if (Platform.isWindows) {
+    final localAppData = Platform.environment['LOCALAPPDATA'];
+    if (localAppData == null || localAppData.isEmpty) {
+      throw StateError('LOCALAPPDATA is unavailable');
+    }
+    final store = Directory(path.join(localAppData, 'PiAgent'));
+    await store.create(recursive: true);
+    factory = _windowsDatabaseFactory;
+    directory = store.path;
+  } else {
+    factory = databaseFactory;
+    directory = await factory.getDatabasesPath();
+  }
+  return factory.openDatabase(path.join(directory, fileName), options: options);
 }

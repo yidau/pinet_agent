@@ -16,6 +16,9 @@ import 'mcp/mcp_client.dart';
 import 'mcp/tool_registry.dart';
 import 'network.dart';
 import 'storage/history.dart';
+import 'telemetry/dashboard_page.dart';
+import 'telemetry/message_page.dart';
+import 'telemetry/telemetry_connection.dart';
 import 'time_sync/time_sync_screen.dart';
 import 'ui/capture_workspace.dart';
 import 'ui/console_style.dart';
@@ -126,7 +129,7 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   static const _freshFor = Duration(seconds: 30);
   final _elapsed = Stopwatch()..start();
   late final _tabMotion = AnimationController(
@@ -134,9 +137,10 @@ class _ChatScreenState extends State<ChatScreen>
     duration: const Duration(milliseconds: 160),
   );
   Animation<Offset> _tabOffset = const AlwaysStoppedAnimation(Offset.zero);
-  final _workspaces = List<Widget?>.filled(4, null);
+  final _workspaces = List<Widget?>.filled(5, null);
   final _draft = TextEditingController();
   final _device = DeviceConnection();
+  final _telemetry = TelemetryConnection();
   late final _history = widget.history ?? History();
   final _entries = <ChatEntry>[];
   final _observations = <String, Json>{};
@@ -162,17 +166,36 @@ class _ChatScreenState extends State<ChatScreen>
     _connection =
         widget.initialConnection ?? Connection.fromBuildConfiguration();
     _device.addListener(_onDeviceChanged);
+    _telemetry.addListener(_onTelemetryChanged);
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_restore());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _telemetry.removeListener(_onTelemetryChanged);
+    _telemetry.dispose();
     _tabMotion.dispose();
     _device.removeListener(_onDeviceChanged);
     _device.dispose();
     _client?.close();
     _draft.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _telemetry.setForeground(true);
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _telemetry.setForeground(false);
+    }
+  }
+
+  void _onTelemetryChanged() {
+    if (mounted) setState(() {});
   }
 
   void _onDeviceChanged() {
@@ -241,6 +264,7 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   void _loadObservations(DeviceSession session) {
+    if (_selectedTab == 0 && _telemetry.isConfigured) return;
     final names = switch (_selectedTab) {
       0 => [
         'get_system_info',
@@ -312,11 +336,17 @@ class _ChatScreenState extends State<ChatScreen>
       await _settings();
       return;
     }
+    _telemetry.start();
     await _device.connect(
       endpoint: connection.mcp,
       token: connection.token,
       createHttpClient: connection.deviceClient,
     );
+  }
+
+  void _disconnect() {
+    _telemetry.stop();
+    unawaited(_device.disconnect());
   }
 
   Future<void> _restore() async {
@@ -363,6 +393,15 @@ class _ChatScreenState extends State<ChatScreen>
         _enrollmentWarning = false;
       }
     });
+    final profile = _enrollment;
+    final matches =
+        profile != null &&
+        profile.mcpUrl == connection.mcp &&
+        profile.token == connection.token &&
+        profile.caPem == connection.enrollmentCa;
+    _telemetry.useTarget(
+      matches ? TelemetryTarget.fromEnrollment(profile) : null,
+    );
   }
 
   Future<void> _enrollmentSettings() => Navigator.of(context).push<void>(
@@ -473,6 +512,8 @@ class _ChatScreenState extends State<ChatScreen>
     final dark = theme.brightness == Brightness.dark;
     final enabled = !_busy && !_loading;
     final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final telemetryMode = _telemetry.isConfigured;
+    final tabs = telemetryMode ? const [0, 4, 3] : const [0, 1, 2, 3, 4];
     // Keep hidden tabs mounted without rebuilding their lists on every device reply.
     _workspaces[_selectedTab] = _workspace(_selectedTab, session);
     return Scaffold(
@@ -491,7 +532,13 @@ class _ChatScreenState extends State<ChatScreen>
             ],
             Expanded(
               child: Text(
-                const ['PocketNet AI', '无线', '采集', 'AI 助手'][_selectedTab],
+                const [
+                  'PocketNet AI',
+                  '无线',
+                  '采集',
+                  'AI 助手',
+                  '消息中心',
+                ][_selectedTab],
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -519,7 +566,11 @@ class _ChatScreenState extends State<ChatScreen>
                 case 'theme':
                   widget.toggleTheme?.call();
                 case 'disconnect':
-                  unawaited(_device.disconnect());
+                  _disconnect();
+                case 'wireless':
+                  _selectTab(1);
+                case 'captures':
+                  _selectTab(2);
               }
             },
             itemBuilder: (context) => [
@@ -528,13 +579,17 @@ class _ChatScreenState extends State<ChatScreen>
                 _menu('clock', Icons.schedule, '蓝牙校时', enabled),
               ],
               _menu('settings', Icons.settings_outlined, '连接设置', enabled),
+              if (telemetryMode) ...[
+                _menu('wireless', Icons.wifi, '无线详情', true),
+                _menu('captures', Icons.folder_open, '采集文件', true),
+              ],
               _menu(
                 'theme',
                 dark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
                 dark ? '切换浅色外观' : '切换深色外观',
                 true,
               ),
-              if (session != null)
+              if (session != null || _telemetry.isRequested)
                 _menu('disconnect', Icons.link_off, '断开连接', true),
             ],
           ),
@@ -553,32 +608,17 @@ class _ChatScreenState extends State<ChatScreen>
                 ),
               ),
               child: NavigationBar(
-                selectedIndex: _selectedTab,
-                onDestinationSelected: _selectTab,
+                selectedIndex: tabs.contains(_selectedTab)
+                    ? tabs.indexOf(_selectedTab)
+                    : 0,
+                onDestinationSelected: (index) => _selectTab(tabs[index]),
                 height:
                     64 +
                     (MediaQuery.textScalerOf(context).scale(12) - 12).clamp(
                       0,
                       24,
                     ),
-                destinations: const [
-                  NavigationDestination(
-                    icon: Icon(Symbols.space_dashboard),
-                    selectedIcon: Icon(Symbols.space_dashboard, fill: 1),
-                    label: '概览',
-                  ),
-                  NavigationDestination(icon: Icon(Symbols.wifi), label: '无线'),
-                  NavigationDestination(
-                    icon: Icon(Symbols.folder_open),
-                    selectedIcon: Icon(Symbols.folder, fill: 1),
-                    label: '采集',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Symbols.auto_awesome),
-                    selectedIcon: Icon(Symbols.auto_awesome, fill: 1),
-                    label: 'AI 助手',
-                  ),
-                ],
+                destinations: [for (final index in tabs) _destination(index)],
               ),
             ),
       body: SafeArea(
@@ -595,6 +635,7 @@ class _ChatScreenState extends State<ChatScreen>
                   child: DevicePanel(
                     connection: _device,
                     endpoint: _connection?.mcp,
+                    statusPrefix: telemetryMode ? 'MCP · ' : '',
                     configuredName:
                         _enrollment?.mcpUrl == _connection?.mcp &&
                             _enrollment?.token == _connection?.token
@@ -641,7 +682,38 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
+  NavigationDestination _destination(int index) => switch (index) {
+    0 => NavigationDestination(
+      icon: const Icon(Symbols.space_dashboard),
+      selectedIcon: const Icon(Symbols.space_dashboard, fill: 1),
+      label: _telemetry.isConfigured ? '仪表盘' : '概览',
+    ),
+    1 => const NavigationDestination(icon: Icon(Symbols.wifi), label: '无线'),
+    2 => const NavigationDestination(
+      icon: Icon(Symbols.folder_open),
+      selectedIcon: Icon(Symbols.folder, fill: 1),
+      label: '采集',
+    ),
+    3 => const NavigationDestination(
+      icon: Icon(Symbols.auto_awesome),
+      selectedIcon: Icon(Symbols.auto_awesome, fill: 1),
+      label: 'AI 助手',
+    ),
+    _ => NavigationDestination(
+      label: '消息中心',
+      icon: Badge(
+        isLabelVisible: _telemetry.unreadCount > 0,
+        label: Text('${_telemetry.unreadCount}'),
+        child: const Icon(Icons.notifications_outlined),
+      ),
+    ),
+  };
+
   Widget _workspace(int index, DeviceSession? session) => switch (index) {
+    0 when _telemetry.isConfigured || _connection == null => DashboardPage(
+      connection: _telemetry,
+      onOpenMessages: () => _selectTab(4),
+    ),
     0 => OverviewWorkspace(
       session: session,
       observations: _observations,
@@ -662,6 +734,7 @@ class _ChatScreenState extends State<ChatScreen>
       },
     ),
     2 => CaptureWorkspace(session: session, observations: _observations),
+    4 => MessagePage(connection: _telemetry),
     _ => InvestigationWorkspace(
       entries: _entries,
       draft: _draft,

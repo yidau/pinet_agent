@@ -1,5 +1,8 @@
 """Collect host device status independently of the MCP transport."""
 
+import json
+import math
+import os
 import platform
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +35,30 @@ def _collection_error(code: str, subject: str, error: Exception) -> ObservationE
     return ObservationError(code, f"Cannot read {subject}: system query failed.", retryable=True)
 
 
+def _telemetry_cache(code: str) -> tuple[dict, datetime] | None:
+    location = os.environ.get("PIAGENT_TELEMETRY_SYSTEM_CACHE")
+    if not location:
+        return None
+    try:
+        with open(location, "rb") as source:
+            data = json.loads(source.read(16 * 1024))
+        sampled = datetime.fromtimestamp(int(data["sampled_at_ms"]) / 1000, UTC)
+        if abs((datetime.now(UTC) - sampled).total_seconds()) <= 12:
+            return data, sampled
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, OverflowError):
+        pass
+    raise ObservationError(code, "No fresh system observation from PiAgent telemetry.", retryable=True)
+
+
+def _cache_number(data: dict, field: str) -> float | None:
+    value = data.get(field)
+    return value if type(value) in (int, float) and math.isfinite(value) else None
+
+
+def _cached_observation(data: dict, sampled: datetime) -> dict:
+    return {**data, "source": "piagent_telemetry", "timestamp": sampled.isoformat().replace("+00:00", "Z")}
+
+
 def get_system_info() -> dict[str, object]:
     try:
         system = platform.uname()
@@ -51,6 +78,14 @@ def get_system_info() -> dict[str, object]:
 
 
 def get_cpu_info() -> dict[str, object]:
+    cached = _telemetry_cache("cpu_info_unavailable")
+    if cached:
+        data, sampled = cached
+        return _cached_observation({
+            "logical_cores": os.cpu_count(),
+            "used_percent": _cache_number(data, "cpu_usage"),
+            "temperature_c": _cache_number(data, "temperature_c"),
+        }, sampled)
     try:
         temperature = None
         if hasattr(psutil, "sensors_temperatures"):
@@ -75,6 +110,17 @@ def get_cpu_info() -> dict[str, object]:
 
 
 def get_memory_info() -> dict[str, object]:
+    cached = _telemetry_cache("memory_info_unavailable")
+    if cached:
+        data, sampled = cached
+        fields = ("memory_total_bytes", "memory_available_bytes")
+        counts = [data.get(field) for field in fields]
+        total, available = [int(value) if str(value).isascii() and str(value).isdigit() else None for value in counts]
+        return _cached_observation({
+            "total_bytes": total,
+            "available_bytes": available,
+            "used_percent": (total - available) / total * 100 if total and available is not None and available <= total else None,
+        }, sampled)
     try:
         memory = psutil.virtual_memory()
     except (OSError, psutil.Error) as error:

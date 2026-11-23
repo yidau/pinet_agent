@@ -1,0 +1,30 @@
+[Unit]
+Description=PocketNet external Wi-Fi datasource manager
+Wants=piagent-kismet.service
+After=piagent-hotspot.service piagent-kismet.service
+ConditionPathExists=/etc/piagent-kismet/monitor.json
+
+[Service]
+User=piagent-wireless
+Group=piagent-wireless
+WorkingDirectory=/usr/local/lib/piagent-wireless
+ExecStart=/usr/bin/python3 -B -m raspberry.mcp_server.wireless_manager
+LoadCredential=monitor.json:/etc/piagent-kismet/monitor.json
+LoadCredential=monitor.key:/etc/piagent-kismet/monitor.key
+RuntimeDirectory=piagent-wireless
+RuntimeDirectoryMode=0755
+UMask=0077
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

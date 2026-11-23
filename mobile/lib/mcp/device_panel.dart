@@ -21,12 +21,14 @@ class DevicePanel extends StatelessWidget {
     required this.endpoint,
     required this.configuredName,
     required this.onConnect,
+    this.statusPrefix = '',
   });
 
   final DeviceConnection connection;
   final Uri? endpoint;
   final String? configuredName;
   final VoidCallback? onConnect;
+  final String statusPrefix;
 
   @override
   Widget build(BuildContext context) {
@@ -88,7 +90,7 @@ class DevicePanel extends StatelessWidget {
                         style: theme.textTheme.labelLarge,
                       ),
                       Text(
-                        statusLabel,
+                        '$statusPrefix$statusLabel',
                         style: theme.textTheme.labelMedium?.copyWith(
                           color: statusColor,
                         ),

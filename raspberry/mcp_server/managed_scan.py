@@ -18,6 +18,8 @@ from .kismet_adapter import KismetAdapter, KismetError
 
 
 STATE = Path("/run/piagent-managed-scan/status.json")
+MONITOR_RESERVATION = Path("/etc/piagent-wireless-monitor-port")
+MONITOR_INTERFACE = "pn-wifi0"
 MAX_APS = 128
 MAX_AGE = 300
 MAX_SAVED_POINTS = 4096
@@ -223,13 +225,43 @@ def check_scan_radio(interfaces, ifindex, allow_shared_ap, require_known_topolog
         raise ScanUnavailable("The selected interface has no identifiable Wi-Fi radio.")
     if require_known_topology and not all(known_interface_radio(i) for i in interfaces):
         raise ScanUnavailable("Cannot verify radio ownership of all wireless interfaces for continuous scanning.")
+    phy = selected.get_attr("NL80211_ATTR_WIPHY")
+    peers = [i for i in interfaces if i.get_attr("NL80211_ATTR_WIPHY") == phy]
+    if any(i.get_attr("NL80211_ATTR_IFTYPE") == 6 or i.get_attr("NL80211_ATTR_IFNAME") == MONITOR_INTERFACE
+           for i in peers):
+        raise ScanUnavailable("This radio is reserved for passive monitoring.")
     ap_roles = (3, 4, 9) if require_known_topology else (3, 4)
-    shares_ap = any(i.get_attr("NL80211_ATTR_IFTYPE") in ap_roles and
-                    i.get_attr("NL80211_ATTR_WIPHY") == selected.get_attr("NL80211_ATTR_WIPHY") for i in interfaces)
+    shares_ap = any(i.get_attr("NL80211_ATTR_IFTYPE") in ap_roles for i in peers)
     if shares_ap and not allow_shared_ap:
         raise ScanUnavailable("This radio hosts an AP. Shared-radio scanning needs explicit operator confirmation.")
     if selected.get_attr("NL80211_ATTR_IFTYPE") not in (2, 3):
         raise ScanUnavailable("The current interface mode does not support this managed scan.")
+    return phy
+
+
+def check_monitor_reservation(phy, reservation=MONITOR_RESERVATION, usb=Path("/sys/bus/usb/devices"),
+                              wireless=Path("/sys/class/ieee80211")):
+    """Protect the monitor's USB port even before udev has assigned its interface name."""
+    try:
+        port = reservation.read_text(encoding="ascii").strip()
+    except FileNotFoundError:
+        return
+    except (OSError, UnicodeError) as exc:
+        raise ScanUnavailable("Cannot read the passive monitor's USB reservation.") from exc
+    if not re.fullmatch(r"[0-9]+-[0-9]+(?:\.[0-9]+)*", port) or type(phy) is not int or not 0 <= phy < 0xffffffff:
+        raise ScanUnavailable("Cannot validate the passive monitor's USB reservation.")
+    try:
+        reserved = (usb / port).resolve(strict=True)
+    except FileNotFoundError:
+        return
+    except (OSError, RuntimeError) as exc:
+        raise ScanUnavailable("Cannot resolve the passive monitor's USB port.") from exc
+    try:
+        device = (wireless / f"phy{phy}" / "device").resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ScanUnavailable("Cannot verify the scan interface's physical device.") from exc
+    if reserved == device or reserved in device.parents:
+        raise ScanUnavailable("This USB radio is assigned to passive monitoring.")
 
 
 def collect(interface, allow_shared_ap, *, require_known_topology=False):
@@ -241,7 +273,8 @@ def collect(interface, allow_shared_ap, *, require_known_topology=False):
     try:
         ifindex = socket.if_nametoindex(interface)
         with IW() as radio:
-            check_scan_radio(list(radio.list_dev()), ifindex, allow_shared_ap, require_known_topology)
+            phy = check_scan_radio(list(radio.list_dev()), ifindex, allow_shared_ap, require_known_topology)
+            check_monitor_reservation(phy)
             start = time.monotonic()
             points = {}
             earlier = []
