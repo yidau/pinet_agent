@@ -159,12 +159,16 @@ class _PocketNetHomeState extends State<PocketNetHome>
               switch (value) {
                 case 'register':
                   unawaited(_openEnrollment());
+                  break;
                 case 'clock':
                   unawaited(_openTimeSync());
+                  break;
                 case 'disconnect':
                   _disconnectTelemetry();
+                  break;
                 case 'theme':
                   widget.onToggleTheme();
+                  break;
               }
             },
             itemBuilder: (_) => [

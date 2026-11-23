@@ -127,7 +127,7 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
           throw const FormatException('树莓派未返回兼容的遥测快照。');
         }
       } finally {
-        await channel.shutdown();
+        await channel.terminate();
       }
       if (mounted) setState(() => _status = 'gRPC 遥测连接成功，已收到设备快照。');
     } on FormatException catch (error) {
