@@ -67,6 +67,7 @@ grep -qx 'WorkingDirectory=/run/piagent-kismet' "$unit_dir/piagent-kismet.servic
 grep -qx 'enable_logging=false' "$root/etc/kismet/piagent.conf"
 grep -qx 'httpd_session_db=/run/piagent-kismet/.kismet/session.db' "$root/etc/kismet/piagent.conf"
 grep -qx 'httpd_auth_file=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$root/etc/kismet/piagent.conf"
+grep -qx 'ReadWritePaths=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$unit_dir/piagent-kismet.service"
 if grep -q '^StateDirectory=' "$unit_dir/piagent-telemetry.service"; then
     echo 'Unexpected persistent telemetry directory.' >&2
     exit 1

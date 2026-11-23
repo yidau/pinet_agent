@@ -6,6 +6,7 @@ StartLimitBurst=4
 [Service]
 User=piagent-kismet
 Group=piagent-kismet
+ReadWritePaths=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf
 RuntimeDirectory=piagent-kismet
 RuntimeDirectoryMode=0700
 Environment=HOME=/run/piagent-kismet
