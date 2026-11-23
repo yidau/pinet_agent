@@ -46,7 +46,7 @@ install -D -m 0644 "$source_dir/raspberry/config/runtime/zramswap" "$root/etc/de
 
 # Remove block-backed swap entries from the image; PocketNet enables zram below.
 if [[ -f "$root/etc/fstab" ]]; then
-    awk '$1 !~ /^#/ && NF >= 3 && $3 == "swap" { next } { print }' \\
+    awk '$1 !~ /^#/ && NF >= 3 && $3 == "swap" { next } { print }' \
         "$root/etc/fstab" > "$root/etc/fstab.pocketnet"
     chmod --reference="$root/etc/fstab" "$root/etc/fstab.pocketnet"
     chown --reference="$root/etc/fstab" "$root/etc/fstab.pocketnet"

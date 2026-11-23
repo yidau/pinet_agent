@@ -253,7 +253,7 @@ void Runtime::publish() {
                       << " event_buffer_event_limit=" << stats.event_limit
                       << " event_buffer_serialized_bytes=" << stats.serialized_bytes
                       << " event_buffer_serialized_byte_limit=" << stats.serialized_byte_limit
-                      << " event_buffer_dropped=" << stats.dropped << '\\n';
+                      << " event_buffer_dropped=" << stats.dropped << '\n';
             next_memory_report = Clock::now() + 60s;
         }
     }
