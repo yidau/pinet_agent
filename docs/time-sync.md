@@ -1,6 +1,6 @@
 # PiAgent V0.2 蓝牙离线校时
 
-手机通过 BLE 向 Raspberry Pi 4B 提供时间。部署后的校时服务由 systemd 在树莓派启动时运行。完成首次配对和授权后，手机可在没有 Wi-Fi、蜂窝数据和外部 NTP 的情况下校准 Linux 系统时间。部署只安装校时模块及其 systemd 单元，沿用现有的热点、SSH 和 MCP 配置。
+手机通过 BLE 向 Raspberry Pi 4B 提供时间。部署后的校时服务由 systemd 在树莓派启动时运行。完成首次配对和授权后，手机可在没有 Wi-Fi、蜂窝数据和外部 NTP 的情况下校准 Linux 系统时间。部署只安装校时模块及其 systemd 单元，沿用现有的热点、SSH 和 gRPC 遥测服务。
 
 ## 部署
 
