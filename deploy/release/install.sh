@@ -146,7 +146,11 @@ def changed_units(before, after):
         units.append("piagent-ble-time-sync.service")
     if wifi_helper in changes:
         units.append("piagent-enrollment-wifi.service")
-    if any(file.startswith("raspberry/wireless/") for file in changes):
+    if "raspberry/config/kismet/configure.py" in changes:
+        units.append("piagent-kismet-provision.service")
+    if "raspberry/config/kismet/configure_monitor.py" in changes or any(
+        file.startswith("raspberry/wireless/") for file in changes
+    ):
         units.append("piagent-wireless-manager.service")
     return units
 
@@ -184,6 +188,12 @@ def managed_configuration(root, release):
             (assets / "piagent-ble-time-sync.conf").read_bytes(),
         "etc/systemd/system/piagent-kismet.service":
             (release / "raspberry/config/kismet/piagent-kismet.service").read_bytes(),
+        "etc/systemd/system/piagent-kismet-provision.service":
+            (release / "raspberry/config/kismet/piagent-kismet-provision.service").read_bytes(),
+        "etc/systemd/system/piagent-wireless-manager.service":
+            (release / "raspberry/config/kismet/piagent-wireless-manager.service").read_bytes(),
+        "etc/piagent-kismet/client.env": None,
+        "etc/piagent-kismet/monitor.key": None,
         "etc/systemd/system/tmp.mount": (assets / "tmp.mount").read_bytes(),
         "etc/systemd/journald.conf.d/pocketnet.conf": (assets / "pocketnet-journald.conf").read_bytes(),
         "etc/default/zramswap": (assets / "zramswap").read_bytes(),
@@ -258,7 +268,11 @@ def configuration_units(paths):
         if path.endswith("journald.conf.d/pocketnet.conf"):
             units.append("systemd-journald.service")
         if path.endswith(("piagent-kismet.service", "kismet/piagent.conf")):
-            units.extend(("piagent-kismet.service", "piagent-wireless-manager.service"))
+            units.append("piagent-kismet.service")
+        if path.endswith("piagent-kismet-provision.service"):
+            units.append("piagent-kismet-provision.service")
+        if path.endswith("piagent-wireless-manager.service"):
+            units.append("piagent-wireless-manager.service")
         if path.endswith("piagent-telemetry.service"):
             units.append("piagent-telemetry.service")
         if path.endswith("piagent-ble-time-sync.service.d/90-pocketnet-image.conf"):
@@ -336,6 +350,19 @@ def install(root, live, archive, expected_sha):
                     subprocess.run(["systemctl", "enable", "zramswap.service"], check=True, timeout=20)
                     if not active("zramswap.service"):
                         subprocess.run(["systemctl", "start", "zramswap.service"], check=True, timeout=30)
+
+                    # API keys live in Kismet's volatile session DB. Ensure the
+                    # per-start provisioner is enabled, then refresh credentials
+                    # before restarting consumers which read the /run files.
+                    subprocess.run(["systemctl", "enable", "piagent-kismet-provision.service"],
+                                   check=True, timeout=20)
+                    if active("piagent-kismet.service") and not active("piagent-kismet-provision.service"):
+                        subprocess.run(["systemctl", "start", "piagent-kismet-provision.service"],
+                                       check=True, timeout=45)
+                        consumers = [unit for unit in
+                                     ("piagent-telemetry.service", "piagent-wireless-manager.service")
+                                     if active(unit)]
+                        restart(consumers)
                 place_updater(prefix, release / "install.sh")
             except BaseException:
                 if current_link(prefix) == selected:

@@ -72,3 +72,8 @@ journalctl -u piagent-telemetry.service -b --since '2 minutes ago' --no-pager
 ```
 
 Only /dev/zram* should appear in swapon --show. A block-backed swap device is a failed SD-card-write policy check. The EventStore's 16 MiB figure is serialized Protobuf payload, not total heap/RSS; compare the Telemetry RSS journal metric and Kismet's separate RSS.
+
+
+## Kismet API credential lifecycle
+
+The Kismet HTTP session database (including Kismet API tokens) is volatile at `/run/piagent-kismet/.kismet/session.db`. On each Kismet start, `piagent-kismet-provision.service` authenticates using the durable Kismet administrator credentials and creates/verifies the readonly and optional datasource-admin API tokens. Runtime consumers read `/run/piagent-kismet/client.env` and `/run/piagent-kismet/monitor.key`; these files are intentionally not persisted. The provisioning service is ordered before Telemetry and the wireless manager. Kismet restart also refreshes the provisioner and its consumers. Existing devices are migrated by the release installer, which removes legacy persisted API-token files from `/etc/piagent-kismet/`.
