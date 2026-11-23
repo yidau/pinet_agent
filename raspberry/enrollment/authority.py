@@ -61,7 +61,7 @@ class Authority:
         config = json.loads((state / "authority.json").read_text(encoding="utf-8"))
         self.device_id = config["device_id"]
         self.ssid = config["ssid"]
-        self.mcp_url = config["mcp_url"]
+        self.telemetry_url = config["telemetry_url"]
         self.ca_pem = config["ca_pem"]
         self.enrollment_verifier = decode(config["enrollment_verifier"], 32)
         self.api_secret = decode(config["api_secret"], 32)
@@ -122,7 +122,7 @@ class Authority:
         device_id, ble_key = phone["device_id"], secrets.token_bytes(32)
         payload = json.dumps({
             "device_id": device_id, "token": self.issue_token(device_id), "ssid": self.ssid,
-            "psk": self.issue_psk(phone["wifi_credential_id"]), "mcp_url": self.mcp_url,
+            "psk": self.issue_psk(phone["wifi_credential_id"]), "telemetry_url": self.telemetry_url,
             "ca_pem": self.ca_pem, "ble_key": b64(ble_key),
         }, separators=(",", ":")).encode("utf-8")
         sealed = protect_response(challenge.ephemeral, client, challenge.nonce, associated, payload)

@@ -25,10 +25,10 @@ def initialize(args: argparse.Namespace) -> None:
     from qrcode.image.svg import SvgPathImage
 
     state = args.state
-    url = urlparse(args.mcp_url)
+    url = urlparse(args.telemetry_url)
     if (url.scheme != "https" or not url.hostname or url.username or url.password
-            or url.query or url.fragment or url.path != "/mcp"):
-        raise ValueError("Use the HTTPS /mcp endpoint")
+            or url.query or url.fragment or url.path not in ("", "/") or url.port != 9443):
+        raise ValueError("Use the HTTPS gRPC telemetry endpoint on port 9443")
     if not 1 <= len(args.ssid.encode("utf-8")) <= 32 or not args.ssid.isprintable():
         raise ValueError("Invalid hotspot name")
     ca_pem = args.ca_file.read_text(encoding="ascii")
@@ -47,7 +47,7 @@ def initialize(args: argparse.Namespace) -> None:
     secret = secrets.token_bytes(32)
     device_key = ec.generate_private_key(ec.SECP256R1())
     config = {
-        "device_id": args.device_id, "ssid": args.ssid, "mcp_url": args.mcp_url, "ca_pem": ca_pem,
+        "device_id": args.device_id, "ssid": args.ssid, "telemetry_url": args.telemetry_url, "ca_pem": ca_pem,
         "enrollment_verifier": b64(qr_key(secret)), "api_secret": b64(secrets.token_bytes(32)),
         "wifi_secret": b64(secrets.token_bytes(32)),
     }
@@ -84,7 +84,7 @@ def main() -> None:
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     commands = parser.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init")
-    for option in ("device-id", "ssid", "mcp-url"):
+    for option in ("device-id", "ssid", "telemetry-url"):
         init.add_argument(f"--{option}", required=True)
     for option in ("ca-file", "qr-file"):
         init.add_argument(f"--{option}", required=True, type=Path)

@@ -249,7 +249,7 @@ int run() {
         text_file(env("PIAGENT_TELEMETRY_TLS_CERT", (directory / "server.pem").c_str()))});
     EventStore events(env("PIAGENT_TELEMETRY_EVENTS", "/var/lib/piagent-telemetry/events.sqlite3"));
     Runtime state(events, KismetCollector(env("PIAGENT_KISMET_URL"), env("PIAGENT_KISMET_API_KEY")),
-                  boot_id() + ":" + events.generation(), env("PIAGENT_TELEMETRY_SYSTEM_CACHE"));
+                  boot_id() + ":" + events.generation());
     TelemetryService service(state, events, env("PIAGENT_DEVICE_REGISTRY", "/var/lib/piagent-devices/devices.sqlite3"));
 
     grpc::ServerBuilder builder;

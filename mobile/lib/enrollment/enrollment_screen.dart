@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
+
+import 'package:grpc/grpc.dart';
 
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import '../mcp/mcp_client.dart';
+import '../telemetry/proto/monitoring.pbgrpc.dart';
 import '../network.dart';
 import 'enrollment_client.dart';
 import 'enrollment_profile.dart';
@@ -94,20 +97,39 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
 
   Future<void> _checkConnection(EnrollmentProfile profile) async {
     final unreachable =
-        '未能连接树莓派。请连接热点 ${profile.ssid} 后重试。'
+        '未能连接树莓派遥测服务。请连接热点 ${profile.ssid} 后重试。'
         '如果手机仍使用旧的热点配置，请在系统设置中移除旧配置，再点「添加热点到手机」。';
     setState(() {
       _working = true;
-      _status = '正在验证 HTTPS 和 MCP 连接…';
+      _status = '正在验证 gRPC 遥测连接…';
     });
     try {
-      final client = mcpHttpClient(profile.mcpUrl, caPem: profile.caPem);
+      final channel = ClientChannel(
+        profile.telemetryUrl.host,
+        port: profile.telemetryUrl.port,
+        options: ChannelOptions(
+          connectTimeout: const Duration(seconds: 6),
+          credentials: ChannelCredentials.secure(
+            certificates: utf8.encode(profile.caPem),
+          ),
+        ),
+      );
       try {
-        await McpClient(client, profile.mcpUrl, profile.token).initialize();
+        final messages = TelemetryServiceClient(channel).subscribe(
+          SubscribeRequest(deviceId: profile.phoneId),
+          options: CallOptions(
+            metadata: {'authorization': 'Bearer ${profile.token}'},
+          ),
+        );
+        final first = await messages.first.timeout(const Duration(seconds: 12));
+        if (first.whichPayload() != TelemetryMessage_Payload.snapshot ||
+            first.snapshot.schemaVersion != 1) {
+          throw const FormatException('树莓派未返回兼容的遥测快照。');
+        }
       } finally {
-        client.close();
+        await channel.shutdown();
       }
-      if (mounted) setState(() => _status = 'HTTPS 和 MCP 连接成功。');
+      if (mounted) setState(() => _status = 'gRPC 遥测连接成功，已收到设备快照。');
     } on FormatException catch (error) {
       if (!mounted) return;
       setState(
@@ -150,7 +172,7 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
                 ),
                 OutlinedButton(
                   onPressed: _working ? null : () => _checkConnection(profile),
-                  child: const Text('测试 HTTPS 和 MCP 连接'),
+                  child: const Text('测试 gRPC 遥测连接'),
                 ),
                 const SizedBox(height: 16),
               ],

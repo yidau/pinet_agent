@@ -4,7 +4,7 @@ import hmac
 import json
 import tempfile
 import unittest
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -15,7 +15,6 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from dbus_next import DBusError, Variant
-from starlette.testclient import TestClient
 
 from raspberry.enrollment.authority import Authority
 from raspberry.enrollment.admin import initialize
@@ -24,7 +23,6 @@ from raspberry.enrollment.protocol import (
     REQUEST_DOMAIN, RESPONSE_KEY, b64, decode, load_public, public_bytes, qr_key, transcript,
 )
 from raspberry.enrollment.registry import Registry
-from raspberry.mcp_server.server import create_app
 from raspberry.time_sync.ble_server import TimeSync
 from raspberry.time_sync.protocol import PROBE, REQUEST, STATUS
 
@@ -44,7 +42,7 @@ class EnrollmentAcceptance(unittest.IsolatedAsyncioTestCase):
             serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption(),
         ))
         (self.state / "authority.json").write_text(json.dumps({
-            "device_id": "piagent-test", "ssid": "PiAgent", "mcp_url": "https://127.0.0.1/mcp",
+            "device_id": "piagent-test", "ssid": "PiAgent", "telemetry_url": "https://127.0.0.1:9443",
             "ca_pem": "test CA", "enrollment_verifier": b64(qr_key(QR_SECRET)),
             "api_secret": b64(b"a" * 32), "wifi_secret": b64(b"w" * 32),
         }), encoding="utf-8")
@@ -102,7 +100,7 @@ class EnrollmentAcceptance(unittest.IsolatedAsyncioTestCase):
 
     async def test_r1_correct_qr_registers_and_seals_credentials(self):
         issuer = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "PiAgent test CA")])
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         ca = (x509.CertificateBuilder().subject_name(issuer).issuer_name(issuer)
               .public_key(self.phone.public_key()).serial_number(x509.random_serial_number())
               .not_valid_before(now - timedelta(days=1)).not_valid_after(now + timedelta(days=1))
@@ -112,7 +110,7 @@ class EnrollmentAcceptance(unittest.IsolatedAsyncioTestCase):
         provisioned, qr = self.state / "provisioned", self.state / "enrollment.svg"
         with patch("raspberry.enrollment.admin.secrets.token_bytes", side_effect=[QR_SECRET, b"a" * 32, b"w" * 32]):
             initialize(SimpleNamespace(state=provisioned, qr_file=qr, ca_file=ca_file,
-                mcp_url="https://127.0.0.1/mcp", device_id="piagent-test", ssid="PiAgent"))
+                telemetry_url="https://127.0.0.1:9443", device_id="piagent-test", ssid="PiAgent"))
         self.assertIn(b"<svg", qr.read_bytes())
         self.authority = Authority(provisioned)
         self.registry = self.authority.registry
@@ -176,46 +174,6 @@ class EnrollmentAcceptance(unittest.IsolatedAsyncioTestCase):
         mac = hmac.digest(grant.ble_key, b"piagent/time-sync/request/v3" + packet, "sha256")[:8]
         await sync.submit(packet[:1] + mac + packet[9:], options, (1_800_000_000_400, 100))
         self.assertEqual(sync.session.probes[1].t2, 1_800_000_000_400)
-
-    def client(self):
-        app = create_app(self.state, "a" * 32, [], self.registry.database)
-        return TestClient(app, base_url="https://127.0.0.1")
-
-    @staticmethod
-    def headers(token):
-        return {"Authorization": "Bearer " + token, "Accept": "application/json, text/event-stream"}
-
-    @staticmethod
-    def initialize_frame():
-        return {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "v03", "version": "1"},
-        }}
-
-    async def test_w4_registered_token_reaches_api(self):
-        profile = await self.register()
-        with self.client() as http:
-            response = http.post("/mcp", headers=self.headers(profile["token"]), json=self.initialize_frame())
-            self.assertEqual(response.status_code, 200)
-            self.assertIn("serverInfo", response.json()["result"])
-            old_shared = http.post("/mcp", headers=self.headers("a" * 32), json=self.initialize_frame())
-            self.assertEqual(old_shared.status_code, 401)
-
-    async def test_d2_revoked_device_cannot_initialize_api(self):
-        profile = await self.register()
-        self.registry.revoke(profile["device_id"], lambda wifi_id: self.wifi("revoke", wifi_id))
-        with self.client() as http:
-            reply = http.post("/mcp", headers=self.headers(profile["token"]), json=self.initialize_frame())
-        self.assertEqual(reply.status_code, 401)
-
-    async def test_d3_revoked_device_cannot_continue_mcp(self):
-        profile = await self.register()
-        with self.client() as http:
-            headers = self.headers(profile["token"])
-            self.assertEqual(http.post("/mcp", headers=headers, json=self.initialize_frame()).status_code, 200)
-            self.registry.revoke(profile["device_id"], lambda wifi_id: self.wifi("revoke", wifi_id))
-            call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_system_info", "arguments": {}}}
-            self.assertEqual(http.post("/mcp", headers=headers, json=call).status_code, 401)
-        self.assertIsNone(await self.service.grant(FIRST))
 
     async def test_d4_other_device_remains_active(self):
         first = await self.register()

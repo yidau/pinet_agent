@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <iterator>
 #include <utility>
 
 namespace pocketnet::telemetry {

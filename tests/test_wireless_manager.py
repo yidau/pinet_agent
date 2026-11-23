@@ -5,9 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from raspberry.mcp_server import wireless_manager as radio
-from raspberry.mcp_server.kismet_adapter import KismetError
-from raspberry.mcp_server.managed_scan import ScanUnavailable, check_monitor_reservation, check_scan_radio
+from raspberry.wireless import wireless_manager as radio
+from raspberry.wireless.kismet_adapter import KismetError
 
 
 UUID = "11111111-2222-3333-4444-555555555555"
@@ -20,7 +19,7 @@ PHY = "Wiphy phy2\n\tSupported interface modes:\n\t\t * managed\n\t\t * monitor\
 def kismet_source(*, running=True, uuid=UUID):
     fields = {"uuid": uuid.upper(), "name": radio.SOURCE_NAME, "remote": 0, "retry": 0,
               "interface": radio.MONITOR_INTERFACE, "capture_interface": radio.MONITOR_VIF,
-              "definition": f"{radio.MONITOR_INTERFACE}:type=linuxwifi,vif={radio.MONITOR_VIF}",
+              "definition": f"{radio.MONITOR_INTERFACE}:type=linuxwifi,vif={radio.MONITOR_VIF},filter_mgmt=true",
               "running": running, "paused": 0, "error": 0,
               "type_driver": {"kismet.datasource.driver.type": "linuxwifi"}}
     return {radio.FIELD + key: value for key, value in fields.items()}
@@ -95,33 +94,3 @@ class WirelessRoleTests(unittest.TestCase):
         api.list_sources.side_effect = KismetError("KISMET_CONNECTION", "no server")
         self.assertEqual(manager.check(), ("degraded", "kismet_connection", None))
 
-    def test_managed_scan_cannot_use_the_monitor_radio_or_its_reserved_usb_port(self):
-        def interface(index, kind, phy, name):
-            row = Mock()
-            row.get_attr.side_effect = {"NL80211_ATTR_IFINDEX": index, "NL80211_ATTR_IFTYPE": kind,
-                                        "NL80211_ATTR_WIPHY": phy, "NL80211_ATTR_IFNAME": name}.get
-            return row
-
-        builtin = interface(1, 3, 0, "wlan0")
-        usb_station = interface(2, 2, 1, "wlan1")
-        for other in (interface(3, 6, 1, "monitor"), interface(3, 2, 1, radio.MONITOR_INTERFACE)):
-            inventory = [builtin, usb_station, other]
-            for shared_allowed, strict in ((True, False), (False, True)):
-                with self.assertRaisesRegex(ScanUnavailable, "reserved for passive monitoring"):
-                    check_scan_radio(inventory, 2, shared_allowed, strict)
-            self.assertEqual(check_scan_radio(inventory, 1, True, False), 0)
-
-        port_file = self.root / "assigned-port"
-        port_file.write_text(CONFIG.port + "\n", encoding="ascii")
-        usb = self.root / "usb"
-        reserved_phy = usb / CONFIG.port / "usb-interface" / "ieee80211"
-        (reserved_phy / "phy1" / "device").mkdir(parents=True)
-        builtin_phy = self.root / "onboard" / "ieee80211"
-        (builtin_phy / "phy0" / "device").mkdir(parents=True)
-        with self.assertRaisesRegex(ScanUnavailable, "USB radio is assigned"):
-            check_monitor_reservation(1, port_file, usb, reserved_phy)
-        check_monitor_reservation(0, port_file, usb, builtin_phy)
-
-
-if __name__ == "__main__":
-    unittest.main()

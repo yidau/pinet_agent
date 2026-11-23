@@ -23,46 +23,6 @@ void _openWindowsSqlite() {
   );
 }
 
-class ChatEntry {
-  const ChatEntry(this.role, this.text, {this.details});
-
-  final String role;
-  final String text;
-  final String? details;
-}
-
-class History {
-  Future<Database>? _opening;
-
-  Future<Database> _open() => _opening ??= openPiAgentDatabase(
-    'piagent.db',
-    OpenDatabaseOptions(
-      version: 1,
-      onCreate: (db, _) => db.execute('''
-          CREATE TABLE entries (
-            id INTEGER PRIMARY KEY,
-            role TEXT NOT NULL,
-            text TEXT NOT NULL
-          )
-        '''),
-    ),
-  );
-
-  Future<List<ChatEntry>> load() async {
-    final db = await _open();
-    final rows = await db.query('entries', orderBy: 'id DESC', limit: 100);
-    return [
-      for (final row in rows.reversed)
-        ChatEntry(row['role'] as String, row['text'] as String),
-    ];
-  }
-
-  Future<void> add(ChatEntry entry) async {
-    final db = await _open();
-    await db.insert('entries', {'role': entry.role, 'text': entry.text});
-  }
-}
-
 Future<Database> openPiAgentDatabase(
   String fileName,
   OpenDatabaseOptions options,

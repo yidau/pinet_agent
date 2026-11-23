@@ -131,7 +131,7 @@ class MonitorApi(KismetAdapter):
 
     def add(self, uuid):
         definition = (f"{MONITOR_INTERFACE}:type=linuxwifi,name={SOURCE_NAME},uuid={uuid},"
-                      f"vif={MONITOR_VIF},retry=false")
+                      f"vif={MONITOR_VIF},retry=false,filter_mgmt=true")
         self._request("/datasource/add_source.cmd", {"json": json.dumps({"definition": definition})},
                       text_reply=True, timeout=17)
 
@@ -161,7 +161,8 @@ def is_local_monitor(row):
             and row.get(FIELD + "name") == SOURCE_NAME
             and row.get(FIELD + "interface") == MONITOR_INTERFACE
             and interface == MONITOR_INTERFACE and vifs == [MONITOR_VIF]
-            and row.get(FIELD + "retry") in (False, 0))
+            and row.get(FIELD + "retry") in (False, 0)
+            and "filter_mgmt=true" in options.split(","))
 
 
 class MonitorManager:

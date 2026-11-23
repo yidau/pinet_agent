@@ -75,7 +75,7 @@ class EnrollmentProfile {
     this.token,
     this.ssid,
     this.psk,
-    this.mcpUrl,
+    this.telemetryUrl,
     this.caPem,
   );
 
@@ -89,7 +89,7 @@ class EnrollmentProfile {
     final token = json['token'];
     final ssid = json['ssid'];
     final psk = json['psk'];
-    final mcpUrl = json['mcp_url'];
+    final telemetryUrl = json['telemetry_url'];
     final caPem = json['ca_pem'];
     if (!_identityPattern.hasMatch(piId) ||
         !_fingerprintPattern.hasMatch(fingerprint) ||
@@ -107,15 +107,22 @@ class EnrollmentProfile {
         psk is! String ||
         psk.length < 8 ||
         psk.length > 64 ||
-        mcpUrl is! String ||
-        mcpUrl.length > 512 ||
+        telemetryUrl is! String ||
+        telemetryUrl.length > 512 ||
         caPem is! String ||
         caPem.length > 32768 ||
         !caPem.startsWith('-----BEGIN CERTIFICATE-----')) {
       throw _invalidProfile;
     }
-    final endpoint = serviceUri(mcpUrl);
-    if (endpoint.scheme != 'https' || endpoint.path != '/mcp') {
+    final endpoint = Uri.tryParse(telemetryUrl);
+    if (endpoint == null ||
+        endpoint.scheme != 'https' ||
+        endpoint.host.isEmpty ||
+        endpoint.userInfo.isNotEmpty ||
+        endpoint.hasQuery ||
+        endpoint.hasFragment ||
+        endpoint.path.isNotEmpty ||
+        endpoint.port != 9443) {
       throw _invalidProfile;
     }
     return EnrollmentProfile._(
@@ -160,7 +167,7 @@ class EnrollmentProfile {
       'token': token,
       'ssid': ssid,
       'psk': psk,
-      'mcp_url': mcpUrl.toString(),
+      'telemetry_url': telemetryUrl.toString(),
       'ca_pem': caPem,
     }),
   });
@@ -179,6 +186,6 @@ class EnrollmentProfile {
   final String token;
   final String ssid;
   final String psk;
-  final Uri mcpUrl;
+  final Uri telemetryUrl;
   final String caPem;
 }

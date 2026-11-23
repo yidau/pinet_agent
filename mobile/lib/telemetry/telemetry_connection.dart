@@ -29,7 +29,7 @@ class TelemetryTarget {
 
   factory TelemetryTarget.fromEnrollment(EnrollmentProfile profile) =>
       TelemetryTarget(
-        host: profile.mcpUrl.host,
+        host: profile.telemetryUrl.host,
         deviceKey: '${profile.fingerprint}/${profile.phoneId}',
         phoneId: profile.phoneId,
         token: profile.token,

@@ -15,7 +15,6 @@ StateDirectoryMode=0700
 RuntimeDirectory=piagent-telemetry
 RuntimeDirectoryMode=0755
 Environment=PIAGENT_TELEMETRY_EVENTS=/var/lib/piagent-telemetry/events.sqlite3
-Environment=PIAGENT_TELEMETRY_SYSTEM_CACHE=/run/piagent-telemetry/system.json
 UMask=0077
 ExecStart=/usr/local/bin/piagent-telemetry
 Restart=on-failure

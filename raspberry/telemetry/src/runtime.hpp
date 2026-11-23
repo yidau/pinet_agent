@@ -15,7 +15,7 @@ namespace pocketnet::telemetry {
 
 class Runtime {
 public:
-    Runtime(EventStore& events, KismetCollector kismet, std::string boot_id, std::string system_cache = {});
+    Runtime(EventStore& events, KismetCollector kismet, std::string boot_id);
     ~Runtime();
     v1::MonitoringSnapshot snapshot() const;
 
@@ -37,7 +37,6 @@ private:
     EventStore& events_;
     KismetCollector kismet_;
     const std::string boot_id_;
-    const std::string system_cache_;
     mutable std::mutex lock_;
     mutable std::mutex snapshot_lock_;
     std::condition_variable wake_;

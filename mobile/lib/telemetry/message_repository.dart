@@ -1,7 +1,7 @@
 import 'package:fixnum/fixnum.dart';
 import 'package:sqflite/sqflite.dart';
 
-import '../storage/history.dart';
+import '../storage/database.dart';
 import 'proto/monitoring.pb.dart';
 
 typedef EventCursor = ({String bootId, Int64 sequence});

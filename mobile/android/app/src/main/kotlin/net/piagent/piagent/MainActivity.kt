@@ -11,7 +11,6 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private var permissionResult: MethodChannel.Result? = null
     private val enrollment by lazy { EnrollmentChannel(this) }
-    private val captures by lazy { CapturePicker(this) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -25,10 +24,6 @@ class MainActivity : FlutterActivity() {
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "net.piagent.piagent/enrollment")
             .setMethodCallHandler(enrollment::handle)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "net.piagent.piagent/captures")
-            .setMethodCallHandler { call, result ->
-                if (call.method == "pick") captures.open(result) else result.notImplemented()
-            }
     }
 
     private fun requestBluetoothPermissions(result: MethodChannel.Result) {
@@ -67,7 +62,6 @@ class MainActivity : FlutterActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         enrollment.onActivityResult(requestCode, resultCode, data)
-        captures.onActivityResult(requestCode, resultCode, data)
     }
 
     companion object {

@@ -18,10 +18,9 @@ from configure import ENV, HERE, STATE, api, create_key, read_fields, run, write
 
 ROOT = HERE.parents[2]
 sys.path.insert(0, str(ROOT))
-from raspberry.mcp_server.wireless_manager import (  # noqa: E402
+from raspberry.wireless.wireless_manager import (  # noqa: E402
     HOSTAPD, MONITOR_INTERFACE, NET, MonitorConfig, matches_config, usb_radio,
 )
-from raspberry.mcp_server.managed_scan import MONITOR_RESERVATION  # noqa: E402
 
 
 CONFIG = ENV.parent / "monitor.json"
@@ -30,7 +29,6 @@ KISMET_CONFIG = Path("/etc/kismet/piagent.conf")
 LINK = Path("/etc/systemd/network/10-piagent-monitor.link")
 MONITOR_UNIT = "piagent-wireless-manager.service"
 KISMET_DROP_IN = Path("/etc/systemd/system/piagent-kismet.service.d/monitor-helper.conf")
-SCAN_HELPER = Path("/usr/lib/piagent-managed-scan/raspberry/mcp_server/managed_scan.py")
 DROP_IN_TEXT = """[Service]
 SupplementaryGroups=kismet
 NoNewPrivileges=no
@@ -120,14 +118,10 @@ def setup(args):
             raise SystemExit("The dedicated Kismet credential could not authorize datasource management.")
     subprocess.run(["systemd-sysusers", "-"], text=True, check=True,
                    input='g kismet -\nu piagent-wireless - "PocketNet wireless datasource manager"\n')
-    write_private(MONITOR_RESERVATION, config.port + "\n")
-    MONITOR_RESERVATION.chmod(0o644)
-    if SCAN_HELPER.is_file():
-        install("-m", "0644", ROOT / "raspberry/mcp_server" / SCAN_HELPER.name, SCAN_HELPER)
-    modules = Path("/usr/local/lib/piagent-wireless/raspberry/mcp_server")
+    modules = Path("/usr/local/lib/piagent-wireless/raspberry/wireless")
     install("-d", "-m", "0755", modules)
     for file in ("__init__.py", "kismet_adapter.py", "wireless_manager.py"):
-        install("-m", "0644", ROOT / "raspberry/mcp_server" / file, modules / file)
+        install("-m", "0644", ROOT / "raspberry/wireless" / file, modules / file)
     install("-m", "0644", HERE / MONITOR_UNIT, Path("/etc/systemd/system") / MONITOR_UNIT)
     link = (f"[Match]\nPath={link_path}\nDriver={config.driver}\n"
             f"Property=ID_BUS=usb ID_VENDOR_ID={config.vendor} ID_MODEL_ID={config.product}\n"
@@ -141,11 +135,6 @@ def setup(args):
         path.chmod(0o644)
     write_private(CONFIG, json.dumps(asdict(config)) + "\n")
     write_private(KEY, key + "\n")
-    if kismet_settings.get("dot11_keep_eapol") != "false":
-        original = KISMET_CONFIG.read_text(encoding="utf-8")
-        updated = re.sub(r"(?m)^[ \t]*dot11_keep_eapol[ \t]*=.*\n?", "", original)
-        write_private(KISMET_CONFIG, updated.rstrip() + "\ndot11_keep_eapol=false\n")
-        KISMET_CONFIG.chmod(0o644)
     run("systemctl", "daemon-reload")
     print(f"Installed {MONITOR_UNIT}. Apply the USB naming rule and start the role using the deployment instructions.")
 
