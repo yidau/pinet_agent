@@ -222,7 +222,13 @@ class Lab:
             with kismet_operation():
                 if PAUSE_MARKER.exists():
                     raise RuntimeError("radio_already_claimed")
-                PAUSE_MARKER.write_text(json.dumps({"owner": "radio_lab", "session_id": self.session}))
+                marker_fd = os.open(PAUSE_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                    0o600)
+                try:
+                    os.write(marker_fd, json.dumps({"owner": "radio_lab",
+                                                    "session_id": self.session}).encode())
+                finally:
+                    os.close(marker_fd)
                 own_marker = True
             until = time.monotonic() + 24
             while time.monotonic() < until:
@@ -300,8 +306,12 @@ class Lab:
                 self.proc = None
             if vif_created:
                 try:
-                    run_checked(IW, "dev", LAB_IFACE, "del")
-                except (OSError, subprocess.SubprocessError):
+                    vif = Path("/sys/class/net") / LAB_IFACE
+                    if vif.exists():
+                        if radio is None or (vif / "phy80211").resolve(strict=True) != radio.phy:
+                            raise RuntimeError("lab_interface_identity_changed")
+                        run_checked(IW, "dev", LAB_IFACE, "del")
+                except (OSError, RuntimeError, subprocess.SubprocessError):
                     stopped_reason = "lab_interface_cleanup_failed"
             (RUN / "lab-ap.txt").unlink(missing_ok=True)
             if own_marker:

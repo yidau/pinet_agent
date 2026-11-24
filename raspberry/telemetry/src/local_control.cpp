@@ -134,7 +134,7 @@ v1::RadioLabStatus run_radio_lab(const v1::RadioLabRequest& request, const v1::O
     constexpr char path[] = "/run/piagent-radio/lab.sock";
     std::copy(std::begin(path), std::end(path), addr.sun_path);
     if (connect(channel.fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) return result;
-    const auto payload = body.dump();
+    const auto payload = body.dump() + "\n";
     if (payload.size() > 4000 ||
         send(channel.fd, payload.data(), payload.size(), MSG_NOSIGNAL) != static_cast<ssize_t>(payload.size())) {
         return result;
