@@ -3,7 +3,7 @@ set -Eeuo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 config="$repo/deploy/image"
 . "$config/image.env"
-include_mdk4=${POCKETNET_INCLUDE_MDK4:-false}
+include_mdk4=${POCKETNET_INCLUDE_MDK4:-true}
 case "$include_mdk4" in
     true|false) ;;
     *) echo 'POCKETNET_INCLUDE_MDK4 must be true or false.' >&2; exit 2 ;;

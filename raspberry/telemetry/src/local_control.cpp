@@ -108,6 +108,67 @@ v1::ControlCommandResponse run_control(const char* action, const std::string& re
     return result;
 }
 
+
+v1::RadioLabStatus run_radio_lab(const v1::RadioLabRequest& request, const v1::ObservedDevice* observed) {
+    v1::RadioLabStatus result;
+    result.set_accepted(false);
+    result.set_phase("unavailable");
+    result.set_reason("radio_lab_service_unavailable");
+    Json body = {{"action", request.action()}, {"phone_id", request.phone_id()},
+                 {"request_id", request.request_id()}, {"profile_id", request.profile_id()},
+                 {"session_id", request.session_id()}, {"kind", request.kind()}};
+    if (observed) {
+        body["observed"] = {{"bssid", observed->bssid()}, {"ssid", observed->ssid()},
+                            {"channel", observed->channel()}, {"last_seen_ms", observed->last_seen_ms()}};
+    }
+    struct Socket {
+        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        ~Socket() { if (fd >= 0) close(fd); }
+    } channel;
+    if (channel.fd < 0) return result;
+    const timeval timeout{2, 0};
+    setsockopt(channel.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(channel.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    constexpr char path[] = "/run/piagent-radio/lab.sock";
+    std::copy(std::begin(path), std::end(path), addr.sun_path);
+    if (connect(channel.fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) return result;
+    const auto payload = body.dump() + "\n";
+    if (payload.size() > 4000 ||
+        send(channel.fd, payload.data(), payload.size(), MSG_NOSIGNAL) != static_cast<ssize_t>(payload.size())) {
+        return result;
+    }
+    std::array<char, 4096> bytes{};
+    const auto received = recv(channel.fd, bytes.data(), bytes.size(), 0);
+    if (received <= 0 || received >= static_cast<ssize_t>(bytes.size())) return result;
+    const auto reply = Json::parse(bytes.data(), bytes.data() + received, nullptr, false);
+    if (!reply.is_object()) return result;
+    const auto accepted = reply.find("accepted");
+    if (accepted != reply.end() && accepted->is_boolean()) result.set_accepted(accepted->get<bool>());
+    result.set_phase(text(reply, "phase"));
+    result.set_reason(text(reply, "reason"));
+    result.set_session_id(text(reply, "session_id"));
+    result.set_profile_id(text(reply, "profile_id"));
+    result.set_ssid(text(reply, "ssid"));
+    result.set_bssid(text(reply, "bssid"));
+    result.set_simulated_bssid(text(reply, "simulated_bssid"));
+    result.set_channel(text(reply, "channel"));
+    result.set_kind(text(reply, "kind"));
+    for (const char* key : {"started_at_ms", "finished_at_ms"}) {
+        const auto it = reply.find(key);
+        if (it != reply.end() && it->is_number_integer() && it->get<std::int64_t>() >= 0) {
+            if (std::string(key) == "started_at_ms") result.set_started_at_ms(it->get<std::int64_t>());
+            else result.set_finished_at_ms(it->get<std::int64_t>());
+        }
+    }
+    const auto restored = reply.find("kismet_restored");
+    if (restored != reply.end() && restored->is_boolean()) result.set_kismet_restored(restored->get<bool>());
+    const auto running = reply.find("executor_running");
+    if (running != reply.end() && running->is_boolean()) result.set_executor_running(running->get<bool>());
+    return result;
+}
+
 v1::CapturePolicyStatus capture_policy() {
     v1::CapturePolicyStatus result;
     const auto monitor = state_file(monitor_state);

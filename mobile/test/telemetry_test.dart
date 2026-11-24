@@ -80,6 +80,15 @@ void main() {
       expect(feed.snapshot!.bootId, 'loopback-boot');
       expect(feed.phase, TelemetryPhase.live);
       expect(feed.supportsObservationMode, isTrue);
+      expect(feed.supportsRadioLab, isTrue);
+      final labStatus = await feed.controlRadioLab(
+        action: 'check',
+        bssid: '02:11:22:33:44:55',
+        kind: 'ssid_lab',
+      );
+      expect(labStatus.accepted, isTrue);
+      expect(labStatus.profileId, 'isolated-lab');
+      expect(service.labRequests.single.action, 'check');
       expect((await feed.setObservationPaused(true)).accepted, isTrue);
       expect((await feed.setObservationPaused(false)).accepted, isTrue);
       expect(service.pauseRequests, [true, false]);
@@ -128,7 +137,7 @@ void main() {
     );
   });
 
-  testWidgets('reserved tabs show a placeholder without device actions', (
+  testWidgets('deep inspection reserved and lab tab links to AP discovery', (
     tester,
   ) async {
     await tester.pumpWidget(const PocketNetApp());
@@ -138,7 +147,10 @@ void main() {
     expect(find.text('尚未开放'), findsOneWidget);
     await tester.tap(find.text('主动测试'));
     await tester.pumpAndSettle();
-    expect(find.text('尚未开放'), findsOneWidget);
+    expect(find.text('前往探测模式选择 AP'), findsOneWidget);
+    await tester.tap(find.text('前往探测模式选择 AP'));
+    await tester.pumpAndSettle();
+    expect(find.text('常态监控'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -580,6 +592,7 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
   CapturePolicyStatus policy = CapturePolicyStatus(actual: 'light');
   final profileRequests = <CaptureProfile>[];
   final pauseRequests = <bool>[];
+  final labRequests = <RadioLabRequest>[];
 
   void finish() => _finished.complete();
 
@@ -616,6 +629,21 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
   }
 
   @override
+  Future<RadioLabStatus> controlRadioLab(
+    ServiceCall call,
+    RadioLabRequest request,
+  ) async {
+    expect(call.clientMetadata?['authorization'], 'Bearer $token');
+    labRequests.add(request);
+    return RadioLabStatus(
+      accepted: true,
+      phase: 'available',
+      profileId: 'isolated-lab',
+      bssid: request.bssid,
+    );
+  }
+
+  @override
   Future<ControlCommandResponse> recoverComponent(
     ServiceCall call,
     RecoverComponentRequest request,
@@ -636,7 +664,7 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
         schemaVersion: 1,
         sequence: Int64(1),
         capabilityVersion: 2,
-        supportedFeatures: ['observation_mode'],
+        supportedFeatures: ['observation_mode', 'radio_lab_v1'],
         capturePolicy: policy,
       ),
     );

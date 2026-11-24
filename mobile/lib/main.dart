@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'active_lab/active_lab_home_page.dart';
 import 'enrollment/enrollment_profile.dart';
 import 'enrollment/enrollment_screen.dart';
 import 'telemetry/dashboard_page.dart';
@@ -57,7 +58,7 @@ class _PocketNetHomeState extends State<PocketNetHome>
     with WidgetsBindingObserver {
   final _telemetry = TelemetryConnection();
   EnrollmentProfile? _profile;
-  int _tab = 0;
+  int _tab = 1;
   bool _loading = true;
   bool _profileError = false;
   TelemetryPhase _shownPhase = TelemetryPhase.stopped;
@@ -253,7 +254,10 @@ class _PocketNetHomeState extends State<PocketNetHome>
       DashboardPage(connection: _telemetry, onOpenMessages: _openMessages),
       NormalMonitorPage(connection: _telemetry, active: _tab == 1),
       const _UnavailablePage(title: '深度检测'),
-      const _UnavailablePage(title: '主动测试'),
+      ActiveLabHomePage(
+         connection: _telemetry,
+         onOpenMonitoring: () => setState(() => _tab = 1),
+       ),
     ];
 
     return Scaffold(

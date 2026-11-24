@@ -150,6 +150,8 @@ def changed_units(before, after):
         units.append("piagent-kismet-provision.service")
     if "raspberry/config/runtime/prepare-hotspot.py" in changes:
         units.append("piagent-hotspot.service")
+    if any(file.startswith("raspberry/active_lab/") for file in changes):
+        units.append("piagent-active-lab.service")
     if "raspberry/config/kismet/configure_monitor.py" in changes or any(
         file.startswith("raspberry/wireless/") for file in changes
     ):
@@ -222,6 +224,11 @@ def managed_configuration(root, release):
         settings[path] = asset.read_bytes() if socket.is_file() else None
     settings["etc/systemd/system/sockets.target.wants/piagent-control.socket"] = (
         "../piagent-control.socket" if socket.is_file() else None)
+    lab_unit = assets / "piagent-active-lab.service"
+    settings["etc/systemd/system/piagent-active-lab.service"] = (
+        lab_unit.read_bytes() if lab_unit.is_file() else None)
+    settings["etc/systemd/system/multi-user.target.wants/piagent-active-lab.service"] = (
+        "../piagent-active-lab.service" if lab_unit.is_file() else None)
     kismet = "etc/kismet/piagent.conf"
     template = (release / "raspberry/config/kismet/piagent.conf").read_bytes()
     if (root / kismet).is_file():
@@ -361,11 +368,17 @@ def install(root, live, archive, expected_sha):
             changes = {path: value for path, value in config.items() if prior_config[path][0] != value}
             units = [unit for unit in dict.fromkeys(configuration_units(changes) +
                      changed_units(before, manifest["files"])) if live and active(unit)]
+            lab_name = "piagent-active-lab.service"
+            lab_path = "etc/systemd/system/piagent-active-lab.service"
+            retiring_lab = live and config.get(lab_path) is None and active(lab_name)
+            if retiring_lab:
+                units = [name for name in units if name != lab_name]
             control_unit = "piagent-control.socket"
             control_installed = config.get("etc/systemd/system/piagent-control.socket") is not None
             control_was_running = live and active(control_unit)
             stopped_control = False
             started_control = False
+            stopped_lab = False
             # Restarting the hotspot also affects its DHCP and telemetry
             # consumers. Include previously active consumers explicitly so an
             # SSH update cannot leave them stopped after the hotspot recovers.
@@ -375,6 +388,9 @@ def install(root, live, archive, expected_sha):
                         units.append(unit)
             applied = []
             try:
+                if retiring_lab:
+                    subprocess.run(["systemctl", "stop", lab_name], check=True, timeout=20)
+                    stopped_lab = True
                 if control_was_running and not control_installed:
                     subprocess.run(["systemctl", "stop", control_unit], check=True, timeout=20)
                     stopped_control = True
@@ -394,6 +410,9 @@ def install(root, live, archive, expected_sha):
                     subprocess.run(["systemctl", "start", control_unit], check=True, timeout=20)
                     started_control = True
                 restart(units)
+                if live and config.get(lab_path) is not None and (root / "etc/piagent-kismet/monitor.json").is_file():
+                    if not active(lab_name):
+                        subprocess.run(["systemctl", "start", lab_name], check=True, timeout=20)
                 if live:
                     subprocess.run(["systemctl", "enable", "zramswap.service"], check=True, timeout=20)
                     if not active("zramswap.service"):
@@ -429,6 +448,8 @@ def install(root, live, archive, expected_sha):
                         subprocess.run(["systemctl", "start", control_unit], check=True, timeout=20)
                     if previous:
                         restart(units)
+                        if stopped_lab and not active(lab_name):
+                            subprocess.run(["systemctl", "start", lab_name], check=True, timeout=20)
                 except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                     print(f"Rollback configuration or service restart failed: {error}", file=sys.stderr)
                 raise

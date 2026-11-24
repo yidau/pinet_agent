@@ -8,6 +8,7 @@ service TelemetryService {
   rpc GetObservedDevices(ObservedDevicesRequest) returns (ObservedDevicesPage);
   rpc SetCaptureProfile(SetCaptureProfileRequest) returns (ControlCommandResponse);
   rpc SetObservationMode(SetObservationModeRequest) returns (ControlCommandResponse);
+  rpc ControlRadioLab(RadioLabRequest) returns (RadioLabStatus);
   rpc RecoverComponent(RecoverComponentRequest) returns (ControlCommandResponse);
 }
 
@@ -377,4 +378,31 @@ message ControlCommandResponse {
   optional bool accepted = 2;
   optional CommandStatus status = 3;
   optional string reason = 4;
+}
+
+// Controlled lab operations only. No arbitrary argv, MAC source or raw frame input.
+message RadioLabRequest {
+  optional string phone_id = 1;
+  optional string request_id = 2;
+  optional string action = 3; // check,start,renew,stop,status
+  optional string profile_id = 4; // provisioned locally on the Raspberry Pi
+  optional string bssid = 5; // compared with fresh Kismet observation
+  optional string session_id = 6;
+  optional string kind = 7; // probe or ssid_lab
+}
+message RadioLabStatus {
+  optional bool accepted = 1;
+  optional string phase = 2;
+  optional string reason = 3;
+  optional string session_id = 4;
+  optional string profile_id = 5;
+  optional string ssid = 6;
+  optional string bssid = 7;
+  optional string simulated_bssid = 8;
+  optional string channel = 9;
+  optional string kind = 10;
+  optional int64 started_at_ms = 11;
+  optional int64 finished_at_ms = 12;
+  optional bool kismet_restored = 13;
+  optional bool executor_running = 14;
 }
