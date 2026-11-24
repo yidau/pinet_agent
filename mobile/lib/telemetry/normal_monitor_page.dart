@@ -32,6 +32,7 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
   };
   final _watch = <String>{};
   final _devices = <ObservedDevice>[];
+  final _ssidTraffic = <String, ObservedTraffic>{};
   ObservedDevicesPage? _page;
   String? _boot;
   String? _telemetryEpoch;
@@ -90,7 +91,11 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
     if (pending != null &&
         (snap.capturePolicy.actual == pending.name.toLowerCase() ||
             const {'failed', 'rolled_back'}.contains(snap.capturePolicy.phase))) {
-      setState(() => _awaited = null);
+      if (snap.capturePolicy.actual == pending.name.toLowerCase()) {
+        setState(_reset);
+      } else {
+        setState(() => _awaited = null);
+      }
     }
     if (!widget.active || _closed || _loading || !_connection.supportsV2 ||
         _connection.phase != TelemetryPhase.live || _connection.stale ||
@@ -126,6 +131,7 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
     _page = null;
     _loading = false;
     _devices.clear();
+    _ssidTraffic.clear();
     _notice = null;
     _awaited = null;
   }
@@ -146,8 +152,14 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
       );
       if (!mounted || ticket != _loadVersion) return;
       setState(() {
-        if (!more) _devices.clear();
+        if (!more) {
+          _devices.clear();
+          _ssidTraffic.clear();
+        }
         _devices.addAll(next.devices);
+        for (final summary in next.ssidTraffic) {
+          if (summary.hasTraffic()) _ssidTraffic[summary.ssid] = summary.traffic;
+        }
         _page = next;
       });
     } on GrpcError catch (error) {
@@ -251,13 +263,29 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
         !_setting &&
         _awaited == null &&
         policy?.phase != 'switching';
+    final trafficAvailable =
+        observing &&
+        !fallback &&
+        _connection.phase == TelemetryPhase.live &&
+        const {
+          'live_source_window',
+          'partial_live_source_window',
+        }.contains(snapshot?.wireless.coverage);
+    String? trafficLabel(ObservedTraffic? traffic) {
+      if (traffic != null && trafficAvailable && policy?.actual == 'light') {
+        return '轻量档未采集普通数据帧';
+      }
+      return observedTrafficLabel(traffic, available: trafficAvailable);
+    }
+
     final aps = <String, List<ObservedDevice>>{};
     final clients = <ObservedDevice>[];
     for (final device in _devices) {
       if (device.kind == ObservedDeviceKind.AP) {
-        (aps[device.ssid.isEmpty ? device.bssid : device.ssid] ??= []).add(
-          device,
-        );
+        final key = device.ssid.isEmpty
+            ? 'BSSID ${device.bssid}'
+            : 'SSID ${device.ssid}';
+        (aps[key] ??= []).add(device);
       } else if (device.kind == ObservedDeviceKind.CLIENT) {
         clients.add(device);
       }
@@ -270,10 +298,10 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
         for (final ap in group)
           if (ap.ssid.isNotEmpty) ap.bssid: ap.ssid,
     };
-    final groups = aps.values.toList()
+    final groups = aps.entries.toList()
       ..sort((a, b) {
-        final aWatched = a.any(watched);
-        final bWatched = b.any(watched);
+        final aWatched = a.value.any(watched);
+        final bWatched = b.value.any(watched);
         return aWatched == bWatched ? 0 : (aWatched ? -1 : 1);
       });
     final risk =
@@ -451,19 +479,29 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
             '${_devices.length}/${page.totalCount} 条 · ${formatTelemetryTime(page.sampledAtMs)}'
             '${page.truncated ? ' · 观测范围受限' : ''}${page.coverage == 'resource_fallback' ? ' · 资源回退暂停详情' : ''}',
           ),
+        if (_devices.length > 32 &&
+            _devices.any((device) => device.hasTraffic()))
+          const Text('多页浏览期间保留本次采样，点刷新查看最新流量。'),
         if (_loading) const LinearProgressIndicator(),
-        for (final group in groups)
+        for (final MapEntry(key: groupKey, value: group) in groups)
           ExpansionTile(
-            key: PageStorageKey('network-${group.first.deviceKey}'),
+            key: PageStorageKey('network-$groupKey'),
             tilePadding: EdgeInsets.zero,
             title: Text(
               group.first.ssid.isEmpty
                   ? '隐藏网络 · ${group.first.bssid}'
                   : group.first.ssid,
             ),
-            subtitle: Text(
+            subtitle: Text([
               '${group.length} 个 BSSID${group.any(watched) ? ' · 已关注' : ''}',
-            ),
+              ?trafficLabel(
+                group.first.ssid.isNotEmpty
+                    ? _ssidTraffic[group.first.ssid]
+                    : group.first.hasTraffic()
+                    ? group.first.traffic
+                    : null,
+              ),
+            ].join('\n')),
             children: [
               if (group.first.ssid.isNotEmpty)
                 TextButton(
@@ -473,13 +511,15 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
               for (final ap in group)
                 ExpansionTile(
                   title: Text(ap.bssid),
-                  subtitle: Text(
+                  subtitle: Text([
                     [
                       ap.security,
                       if (ap.channel.isNotEmpty) '信道 ${ap.channel}',
                       if (ap.hasRssiDbm()) '${ap.rssiDbm.round()} dBm',
                     ].where((s) => s.isNotEmpty).join(' · '),
-                  ),
+                    if (group.first.ssid.isNotEmpty && ap.hasTraffic())
+                      ?trafficLabel(ap.traffic),
+                  ].where((s) => s.isNotEmpty).join('\n')),
                   children: [
                     Text('来源 · 监听网卡 · ${formatTelemetryTime(ap.lastSeenMs)}'),
                     TextButton(

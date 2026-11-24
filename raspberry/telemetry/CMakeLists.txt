@@ -36,7 +36,8 @@ add_library(telemetry_proto STATIC
 target_include_directories(telemetry_proto PUBLIC "${GENERATED_DIR}")
 target_link_libraries(telemetry_proto PUBLIC protobuf::libprotobuf PkgConfig::GRPC)
 
-add_library(telemetry_core STATIC src/collectors.cpp src/event_store.cpp src/high_risk_outbox.cpp src/local_control.cpp src/runtime.cpp)
+add_library(telemetry_core STATIC src/collectors.cpp src/event_store.cpp src/high_risk_outbox.cpp
+    src/local_control.cpp src/runtime.cpp src/wireless_traffic.cpp)
 target_include_directories(telemetry_core PUBLIC src)
 target_link_libraries(telemetry_core PUBLIC telemetry_proto
     PRIVATE OpenSSL::Crypto SQLite::SQLite3 CURL::libcurl nlohmann_json::nlohmann_json Threads::Threads)

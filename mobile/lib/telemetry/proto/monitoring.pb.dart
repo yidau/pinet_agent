@@ -97,7 +97,6 @@ class SubscribeRequest extends $pb.GeneratedMessage {
   @$pb.TagNumber(2)
   void clearLastEventSequence() => $_clearField(2);
 
-  /// Replay epoch received in boot_id, opaque to clients.
   @$pb.TagNumber(3)
   $core.String get lastBootId => $_getSZ(2);
   @$pb.TagNumber(3)
@@ -440,7 +439,6 @@ class MonitoringSnapshot extends $pb.GeneratedMessage {
           MonitoringSnapshot.$_createMessage);
   static MonitoringSnapshot? _defaultInstance;
 
-  /// Replay epoch: Linux boot identifier followed by a per-process identifier.
   @$pb.TagNumber(1)
   $core.String get bootId => $_getSZ(0);
   @$pb.TagNumber(1)
@@ -2701,6 +2699,174 @@ class DeviceHealth extends $pb.GeneratedMessage {
   $pb.PbList<ComponentHealth> get components => $_getList(0);
 }
 
+class ObservedTraffic extends $pb.GeneratedMessage {
+  factory ObservedTraffic({
+    TrafficStatus? status,
+    $fixnum.Int64? observedBytes,
+    $core.int? windowMs,
+    $core.bool? estimated,
+  }) {
+    final result = ObservedTraffic._();
+    if (status != null) result.status = status;
+    if (observedBytes != null) result.observedBytes = observedBytes;
+    if (windowMs != null) result.windowMs = windowMs;
+    if (estimated != null) result.estimated = estimated;
+    return result;
+  }
+
+  ObservedTraffic._();
+
+  factory ObservedTraffic.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservedTraffic()..mergeFromBuffer(data, registry);
+  factory ObservedTraffic.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservedTraffic()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ObservedTraffic',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: ObservedTraffic.$_createMessage)
+    ..aE<TrafficStatus>(1, _omitFieldNames ? '' : 'status',
+        enumValues: TrafficStatus.values)
+    ..a<$fixnum.Int64>(
+        2, _omitFieldNames ? '' : 'observedBytes', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..aI(3, _omitFieldNames ? '' : 'windowMs', fieldType: $pb.PbFieldType.OU3)
+    ..aOB(4, _omitFieldNames ? '' : 'estimated')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservedTraffic clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservedTraffic copyWith(void Function(ObservedTraffic) updates) =>
+      super.copyWith((message) => updates(message as ObservedTraffic))
+          as ObservedTraffic;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use ObservedTraffic() / ObservedTraffic.new instead')
+  static ObservedTraffic create() => ObservedTraffic._();
+  static $pb.GeneratedMessage $_createMessage() => ObservedTraffic._();
+  @$core.override
+  ObservedTraffic createEmptyInstance() => ObservedTraffic._();
+  @$core.pragma('dart2js:noInline')
+  static ObservedTraffic getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<ObservedTraffic>(
+          ObservedTraffic.$_createMessage);
+  static ObservedTraffic? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  TrafficStatus get status => $_getN(0);
+  @$pb.TagNumber(1)
+  set status(TrafficStatus value) => $_setField(1, value);
+  @$pb.TagNumber(1)
+  $core.bool hasStatus() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearStatus() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $fixnum.Int64 get observedBytes => $_getI64(1);
+  @$pb.TagNumber(2)
+  set observedBytes($fixnum.Int64 value) => $_setInt64(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasObservedBytes() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearObservedBytes() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.int get windowMs => $_getIZ(2);
+  @$pb.TagNumber(3)
+  set windowMs($core.int value) => $_setUnsignedInt32(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasWindowMs() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearWindowMs() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.bool get estimated => $_getBF(3);
+  @$pb.TagNumber(4)
+  set estimated($core.bool value) => $_setBool(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasEstimated() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearEstimated() => $_clearField(4);
+}
+
+class SsidTraffic extends $pb.GeneratedMessage {
+  factory SsidTraffic({
+    $core.String? ssid,
+    ObservedTraffic? traffic,
+  }) {
+    final result = SsidTraffic._();
+    if (ssid != null) result.ssid = ssid;
+    if (traffic != null) result.traffic = traffic;
+    return result;
+  }
+
+  SsidTraffic._();
+
+  factory SsidTraffic.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      SsidTraffic()..mergeFromBuffer(data, registry);
+  factory SsidTraffic.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      SsidTraffic()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'SsidTraffic',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: SsidTraffic.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'ssid')
+    ..aOM<ObservedTraffic>(2, _omitFieldNames ? '' : 'traffic',
+        subBuilder: ObservedTraffic.$_createMessage)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  SsidTraffic clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  SsidTraffic copyWith(void Function(SsidTraffic) updates) =>
+      super.copyWith((message) => updates(message as SsidTraffic))
+          as SsidTraffic;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use SsidTraffic() / SsidTraffic.new instead')
+  static SsidTraffic create() => SsidTraffic._();
+  static $pb.GeneratedMessage $_createMessage() => SsidTraffic._();
+  @$core.override
+  SsidTraffic createEmptyInstance() => SsidTraffic._();
+  @$core.pragma('dart2js:noInline')
+  static SsidTraffic getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<SsidTraffic>(
+          SsidTraffic.$_createMessage);
+  static SsidTraffic? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get ssid => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set ssid($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasSsid() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearSsid() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  ObservedTraffic get traffic => $_getN(1);
+  @$pb.TagNumber(2)
+  set traffic(ObservedTraffic value) => $_setField(2, value);
+  @$pb.TagNumber(2)
+  $core.bool hasTraffic() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearTraffic() => $_clearField(2);
+  @$pb.TagNumber(2)
+  ObservedTraffic ensureTraffic() => $_ensure(1);
+}
+
 class ObservedDevice extends $pb.GeneratedMessage {
   factory ObservedDevice({
     $core.String? deviceKey,
@@ -2716,6 +2882,7 @@ class ObservedDevice extends $pb.GeneratedMessage {
     $core.String? relatedApBssid,
     $core.String? sourceScope,
     $core.String? security,
+    ObservedTraffic? traffic,
   }) {
     final result = ObservedDevice._();
     if (deviceKey != null) result.deviceKey = deviceKey;
@@ -2731,6 +2898,7 @@ class ObservedDevice extends $pb.GeneratedMessage {
     if (relatedApBssid != null) result.relatedApBssid = relatedApBssid;
     if (sourceScope != null) result.sourceScope = sourceScope;
     if (security != null) result.security = security;
+    if (traffic != null) result.traffic = traffic;
     return result;
   }
 
@@ -2762,6 +2930,8 @@ class ObservedDevice extends $pb.GeneratedMessage {
     ..aOS(11, _omitFieldNames ? '' : 'relatedApBssid')
     ..aOS(12, _omitFieldNames ? '' : 'sourceScope')
     ..aOS(13, _omitFieldNames ? '' : 'security')
+    ..aOM<ObservedTraffic>(14, _omitFieldNames ? '' : 'traffic',
+        subBuilder: ObservedTraffic.$_createMessage)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -2902,6 +3072,17 @@ class ObservedDevice extends $pb.GeneratedMessage {
   $core.bool hasSecurity() => $_has(12);
   @$pb.TagNumber(13)
   void clearSecurity() => $_clearField(13);
+
+  @$pb.TagNumber(14)
+  ObservedTraffic get traffic => $_getN(13);
+  @$pb.TagNumber(14)
+  set traffic(ObservedTraffic value) => $_setField(14, value);
+  @$pb.TagNumber(14)
+  $core.bool hasTraffic() => $_has(13);
+  @$pb.TagNumber(14)
+  void clearTraffic() => $_clearField(14);
+  @$pb.TagNumber(14)
+  ObservedTraffic ensureTraffic() => $_ensure(13);
 }
 
 class ObservedDevicesRequest extends $pb.GeneratedMessage {
@@ -3033,6 +3214,7 @@ class ObservedDevicesPage extends $pb.GeneratedMessage {
     $fixnum.Int64? sampledAtMs,
     $core.String? coverage,
     $core.int? totalCount,
+    $core.Iterable<SsidTraffic>? ssidTraffic,
   }) {
     final result = ObservedDevicesPage._();
     if (devices != null) result.devices.addAll(devices);
@@ -3042,6 +3224,7 @@ class ObservedDevicesPage extends $pb.GeneratedMessage {
     if (sampledAtMs != null) result.sampledAtMs = sampledAtMs;
     if (coverage != null) result.coverage = coverage;
     if (totalCount != null) result.totalCount = totalCount;
+    if (ssidTraffic != null) result.ssidTraffic.addAll(ssidTraffic);
     return result;
   }
 
@@ -3068,6 +3251,8 @@ class ObservedDevicesPage extends $pb.GeneratedMessage {
     ..aInt64(5, _omitFieldNames ? '' : 'sampledAtMs')
     ..aOS(6, _omitFieldNames ? '' : 'coverage')
     ..aI(7, _omitFieldNames ? '' : 'totalCount', fieldType: $pb.PbFieldType.OU3)
+    ..pPM<SsidTraffic>(8, _omitFieldNames ? '' : 'ssidTraffic',
+        subBuilder: SsidTraffic.$_createMessage)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -3149,6 +3334,9 @@ class ObservedDevicesPage extends $pb.GeneratedMessage {
   $core.bool hasTotalCount() => $_has(6);
   @$pb.TagNumber(7)
   void clearTotalCount() => $_clearField(7);
+
+  @$pb.TagNumber(8)
+  $pb.PbList<SsidTraffic> get ssidTraffic => $_getList(7);
 }
 
 class SetCaptureProfileRequest extends $pb.GeneratedMessage {

@@ -372,6 +372,7 @@ struct MonitorState {
     std::string reason;
     std::string source;
     std::string epoch;
+    std::string profile;
 };
 
 MonitorState readMonitor(const fs::path& path, int64_t now) {
@@ -399,7 +400,8 @@ MonitorState readMonitor(const fs::path& path, int64_t now) {
     if (state == "starting" || state == "degraded") return {state, reason, {}};
     const auto source = uuid(field(doc, "datasource_uuid"));
     if (state != "ready" || source.empty()) return {"degraded", "monitor_state_invalid", {}};
-    return {state, reason, source, string(field(doc, "observation_epoch"), 64)};
+    return {state, reason, source, string(field(doc, "observation_epoch"), 64),
+            string(field(doc, "actual_profile"), 16)};
 }
 
 std::optional<uint64_t> recentRate(const Json& rrd, int64_t now) {
@@ -438,6 +440,7 @@ Json deviceFields(int64_t now) {
             Json::array({"dot11.device/dot11.device.last_beaconed_ssid_record/dot11.advertisedssid.crypt_string", "beacon_security"}),
             Json::array({"dot11.device/dot11.device.last_bssid", "last_bssid"}),
             Json::array({"dot11.device/dot11.device.associated_client_map", "associated_clients"}),
+            Json::array({"dot11.device/dot11.device.datasize", "data_bytes"}),
         })},
         {"datatable", true},
         {"last_time", std::max<int64_t>(0, now / 1000 - 300)},
@@ -490,13 +493,13 @@ struct AccessPoint {
 };
 
 v1::WirelessSummary summarize(const DeviceWindow& window, int64_t now,
-                              std::map<std::string, AccessPoint>& aps,
-                              std::vector<v1::ObservedDevice>& devices) {
+                              KismetSample& sample) {
     v1::WirelessSummary summary;
     if (!window.available) {
         summary.set_coverage("source_view_unavailable");
         return summary;
     }
+    std::map<std::string, AccessPoint> aps;
     std::map<std::string, v1::ObservedDevice> clients;
     std::map<std::string, std::string> last_bssids;
     std::map<std::string, const Json*> associations;
@@ -574,12 +577,16 @@ v1::WirelessSummary summarize(const DeviceWindow& window, int64_t now,
     }
     for (const auto& [address, ap] : aps) {
         clients.erase(address);
-        auto item = info(*associations.at(address), address, ap.lastSeen);
+        const auto& row = *associations.at(address);
+        auto item = info(row, address, ap.lastSeen);
         item.set_kind(v1::AP);
         item.set_bssid(address);
         if (ap.metadata.has_ssid()) item.set_ssid(ap.metadata.ssid());
         if (!ap.metadata.security().empty()) item.set_security(ap.metadata.security());
-        devices.push_back(std::move(item));
+        if (const auto bytes = unsignedNumber(field(row, "data_bytes"))) {
+            sample.ap_data_bytes.emplace(address, *bytes);
+        }
+        sample.devices.push_back(std::move(item));
     }
     for (auto& [address, item] : clients) {
         const auto ap = associations.find(last_bssids.at(address));
@@ -595,7 +602,7 @@ v1::WirelessSummary summarize(const DeviceWindow& window, int64_t now,
                 }
             }
         }
-        devices.push_back(std::move(item));
+        sample.devices.push_back(std::move(item));
     }
     summary.set_ap_count(static_cast<uint32_t>(aps.size()));
     summary.set_client_count(static_cast<uint32_t>(clients.size()));
@@ -742,6 +749,8 @@ KismetSample KismetCollector::sample(bool include_devices) {
     }
     sample.capture.set_datasource_uuid(monitor.source);
     sample.observation_epoch = monitor.epoch;
+    sample.capture_profile = monitor.profile;
+    sample.kismet_started = unsignedNumber(field(status.data, "kismet.system.timestamp.start_sec"));
     const auto running = flag(field(*source, "kismet.datasource.running"));
     const auto paused = flag(field(*source, "kismet.datasource.paused"));
     const auto error = flag(field(*source, "kismet.datasource.error"));
@@ -796,8 +805,7 @@ KismetSample KismetCollector::sample(bool include_devices) {
     for (auto& ch : upper) if (ch >= 'a' && ch <= 'f') ch -= 'a' - 'A';
     const auto view = readDeviceWindow(url_, api_key_, "/devices/views/seenby-" + upper + "/devices.json",
                                       monitor.source, now);
-    std::map<std::string, AccessPoint> aps;
-    sample.wireless = summarize(view, now, aps, sample.devices);
+    sample.wireless = summarize(view, now, sample);
     if (sample.wireless.has_ap_count()) {
         sample.capture.set_tracked_devices(uint64_t(sample.wireless.ap_count()) + sample.wireless.client_count());
     }

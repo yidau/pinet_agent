@@ -3,6 +3,7 @@
 #include "collectors.hpp"
 #include "event_store.hpp"
 #include "high_risk_outbox.hpp"
+#include "wireless_traffic.hpp"
 
 #include <array>
 #include <atomic>
@@ -29,6 +30,7 @@ private:
     struct DeviceView {
         std::vector<v1::ObservedDevice> devices;
         v1::WirelessSummary summary;
+        WirelessTraffic::SsidSummaries ssid_traffic;
         std::uint64_t generation;
     };
     struct PageCursor {

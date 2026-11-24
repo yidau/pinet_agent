@@ -30,7 +30,10 @@ struct KismetSample {
     v1::CaptureMetrics capture;
     v1::WirelessSummary wireless;
     std::vector<v1::ObservedDevice> devices;
+    std::map<std::string, uint64_t> ap_data_bytes;
     std::string observation_epoch;
+    std::string capture_profile;
+    std::optional<uint64_t> kismet_started;
 };
 
 struct KismetAlerts {

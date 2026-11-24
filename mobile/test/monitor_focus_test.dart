@@ -1,7 +1,34 @@
+import 'package:fixnum/fixnum.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:piagent/telemetry/monitor_focus.dart';
+import 'package:piagent/telemetry/proto/monitoring.pb.dart';
 
 void main() {
+  test('observed traffic distinguishes zero, partial and unavailable samples', () {
+    final sample = ObservedTraffic(
+      status: TrafficStatus.TRAFFIC_OBSERVED,
+      observedBytes: Int64.ZERO,
+      windowMs: 30000,
+    );
+    expect(observedTrafficLabel(sample, available: true), '30 秒观测 · 0 B');
+    sample
+      ..status = TrafficStatus.TRAFFIC_PARTIAL
+      ..observedBytes = Int64(1536)
+      ..estimated = true;
+    expect(
+      observedTrafficLabel(sample, available: true),
+      '30 秒观测 · 约 1.5 KiB · 部分观测',
+    );
+    expect(observedTrafficLabel(sample, available: false), '观测流量暂不可用');
+    expect(observedTrafficLabel(null, available: true), isNull);
+    sample
+      ..status = TrafficStatus.TRAFFIC_WARMING_UP
+      ..clearObservedBytes();
+    expect(observedTrafficLabel(sample, available: true), '等待 30 秒采样');
+    sample.status = TrafficStatus.TRAFFIC_PROFILE_FILTERED;
+    expect(observedTrafficLabel(sample, available: true), '轻量档未采集普通数据帧');
+  });
+
   test('SSID and BSSID focus both match the corresponding security event', () {
     const known = {'aa:bb:cc:dd:ee:ff': 'Guest-WiFi'};
     expect(focusMatchesBssid('aa:bb:cc:dd:ee:ff', {'SSID Guest-WiFi'}, known), isTrue);

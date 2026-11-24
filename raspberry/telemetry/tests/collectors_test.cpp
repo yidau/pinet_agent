@@ -1,4 +1,5 @@
 #include "collectors.hpp"
+#include "wireless_traffic.hpp"
 
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -23,6 +24,7 @@ namespace fs = std::filesystem;
 using Json = nlohmann::json;
 using pocketnet::telemetry::KismetCollector;
 using pocketnet::telemetry::LinuxCollector;
+using pocketnet::telemetry::WirelessTraffic;
 
 void expect(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
@@ -195,7 +197,9 @@ void kismetSample() {
     constexpr auto uppercase = "3FD447ED-DA27-446F-8E92-D35AA1ABBF0F";
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
-    auto monitor = Json{{"state", "ready"}, {"reason", "ok"}, {"datasource_uuid", source}, {"timestamp_ms", now * 1000}};
+    auto monitor = Json{{"state", "ready"}, {"reason", "ok"}, {"datasource_uuid", source},
+                        {"timestamp_ms", now * 1000}, {"observation_epoch", "fixture"},
+                        {"actual_profile", "balanced"}};
     f.write("monitor.json", monitor.dump());
     Json device = {
         {"kismet.device.base.type", "Wi-Fi AP"}, {"kismet.device.base.phyname", "IEEE802.11"},
@@ -203,6 +207,7 @@ void kismetSample() {
         {"kismet.device.base.frequency", 2462000}, {"kismet.device.base.first_time", now - 60},
         {"kismet.device.base.last_time", now - 1}, {"ssid", "Test AP"}, {"beacon_security", "WPA3"},
         {"signal_type", "dbm"}, {"signal_value", -38},
+        {"data_bytes", 5000},
         {"kismet.device.base.seenby", {{"1", {{"kismet.common.seenby.uuid", uppercase}}}}},
     };
     auto mixed = device;
@@ -212,6 +217,7 @@ void kismetSample() {
     station["kismet.device.base.type"] = "Wi-Fi Client";
     station["kismet.device.base.macaddr"] = "20:00:00:00:00:03";
     station["kismet.device.base.key"] = "client-id";
+    station["data_bytes"] = 1200;
     station["last_bssid"] = device["kismet.device.base.macaddr"];
     device["associated_clients"] = {{"20:00:00:00:00:03", "client-id"}};
     auto stale = device;
@@ -242,7 +248,7 @@ void kismetSample() {
         {"kismet.common.rrd.minute_vec", seconds},
     }}};
     LocalApi fake({
-        {"/system/status.json", {{"kismet.system.version", "fixture"}}},
+        {"/system/status.json", {{"kismet.system.version", "fixture"}, {"kismet.system.timestamp.start_sec", 123}}},
         {"/datasource/all_sources.json", choices},
         {"/packetchain/packet_stats.json", stats},
         {std::string("/devices/views/seenby-") + uppercase + "/devices.json",
@@ -263,6 +269,9 @@ void kismetSample() {
     expect(reading.devices.size() == 2 &&
            reading.devices[1].association_state() == pocketnet::v1::CONFIRMED,
            "explicit Kismet evidence relates the client and AP from separate pages");
+    expect(reading.ap_data_bytes.size() == 1 && reading.ap_data_bytes.at("20:00:00:00:00:01") == 5000 &&
+           reading.kismet_started == 123 && reading.capture_profile == "balanced",
+           "only the selected BSSID's data counter and session are reported for traffic accounting");
     const auto alerts = collector.sample_alerts();
     expect(alerts.reachable && alerts.events.size() == 2 &&
            alerts.events[0].risk_class() == pocketnet::v1::SUSPICIOUS &&
@@ -277,12 +286,105 @@ void kismetSample() {
            "stale manager state yields degraded rather than a quiet AP count");
 }
 
+void wirelessTraffic() {
+    using namespace pocketnet;
+    using namespace std::chrono_literals;
+    WirelessTraffic traffic;
+    v1::CapturePolicyStatus policy;
+    policy.set_actual("balanced");
+    constexpr auto first = "20:00:00:00:00:01";
+    constexpr auto second = "20:00:00:00:00:02";
+    constexpr auto hidden = "20:00:00:00:00:03";
+    const auto epoch = WirelessTraffic::Clock::time_point{};
+    const auto make = [&](int seconds) {
+        telemetry::KismetSample sample;
+        sample.wireless.set_sampled_at_ms(1000000 - seconds * 1000);
+        sample.capture.set_coverage("live_monitor_active");
+        sample.capture.set_datasource_uuid("test-source");
+        sample.capture_profile = "balanced";
+        sample.observation_epoch = "test-session";
+        sample.kismet_started = 123;
+        for (const auto* bssid : {first, second, hidden}) {
+            v1::ObservedDevice ap;
+            ap.set_kind(v1::AP);
+            ap.set_bssid(bssid);
+            if (bssid != hidden) ap.set_ssid("Office");
+            sample.devices.push_back(std::move(ap));
+        }
+        sample.ap_data_bytes = {{first, 1000 + seconds * 10}, {second, 2000 + seconds * 20}, {hidden, 3000}};
+        return sample;
+    };
+    for (auto seconds : {0, 5, 10, 15, 20, 25, 30, 32}) {
+        auto sample = make(seconds);
+        const auto groups = traffic.update(sample, policy, epoch + std::chrono::seconds(seconds));
+        const auto& office = groups.at("Office");
+        expect(groups.size() == 1, "hidden BSSID is not included in SSID totals");
+        if (seconds < 30) {
+            expect(!office.has_observed_bytes() && office.status() == v1::TRAFFIC_WARMING_UP,
+                   "a partial time window does not report zero");
+        } else {
+            expect(office.window_ms() == 30000 && office.observed_bytes() == 900 &&
+                   office.estimated() == (seconds == 32) &&
+                   sample.devices[0].traffic().observed_bytes() == 300 &&
+                   sample.devices[1].traffic().observed_bytes() == 600,
+                   "aligned SSID sums use rolling BSSID deltas through a wall clock change");
+            expect(sample.devices[2].traffic().has_observed_bytes() &&
+                   sample.devices[2].traffic().observed_bytes() == 0,
+                   "a stable counter represents an observed zero independently of the SSID");
+        }
+    }
+
+    auto reset = make(35);
+    reset.ap_data_bytes.at(first) = 20;
+    const auto partial = traffic.update(reset, policy, epoch + 35s).at("Office");
+    expect(partial.status() == v1::TRAFFIC_PARTIAL && partial.observed_bytes() == 600 &&
+           !reset.devices[0].traffic().has_observed_bytes(), "reset counters leave only the valid BSSID in the partial total");
+
+    auto no_counter = make(40);
+    no_counter.ap_data_bytes.erase(first);
+    traffic.update(no_counter, policy, epoch + 40s);
+    expect(no_counter.devices[0].traffic().status() == v1::TRAFFIC_UNAVAILABLE,
+           "missing counters are distinct from zero and warming");
+
+    auto restarted = make(45);
+    restarted.kismet_started = 234;
+    const auto warm = traffic.update(restarted, policy, epoch + 45s).at("Office");
+    expect(!warm.has_observed_bytes() && warm.status() == v1::TRAFFIC_WARMING_UP,
+           "a Kismet restart invalidates old counters even when new counters are already greater");
+
+    auto light = make(50);
+    light.capture_profile = "light";
+    policy.set_actual("light");
+    expect(traffic.update(light, policy, epoch + 50s).at("Office").status() == v1::TRAFFIC_PROFILE_FILTERED,
+           "light mode reports filtered data even if lifetime counters still exist");
+
+    policy.set_actual("balanced");
+    auto disconnected = make(55);
+    disconnected.capture.clear_coverage();
+    expect(traffic.update(disconnected, policy, epoch + 55s).at("Office").status() == v1::TRAFFIC_UNAVAILABLE,
+           "unavailable capture clears the traffic baseline");
+
+    for (int seconds = 60; seconds <= 90; seconds += 5) {
+        auto sample = make(seconds);
+        if (seconds == 70) sample.wireless.set_truncated(true);
+        const auto office = traffic.update(sample, policy, epoch + std::chrono::seconds(seconds)).at("Office");
+        if (seconds == 90) {
+            expect(office.status() == v1::TRAFFIC_PARTIAL && office.observed_bytes() == 900,
+                   "a partial source view is remembered for the full rolling window");
+        }
+    }
+    auto late = make(105);
+    expect(traffic.update(late, policy, epoch + 105s).at("Office").status() == v1::TRAFFIC_WARMING_UP,
+           "a missed sampling interval re-primes the next 30 second window");
+}
+
 }  // namespace
 
 int main() {
     try {
         linuxSample();
         kismetSample();
+        wirelessTraffic();
         std::cout << "Collectors fixture checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

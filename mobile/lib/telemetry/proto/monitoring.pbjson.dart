@@ -181,6 +181,24 @@ final $typed_data.Uint8List associationStateDescriptor = $convert.base64Decode(
     'ChBBc3NvY2lhdGlvblN0YXRlEhsKF0FTU09DSUFUSU9OX1VOU1BFQ0lGSUVEEAASEwoPTk9UX0'
     'VTVEFCTElTSEVEEAESDQoJQ09ORklSTUVEEAI=');
 
+@$core.Deprecated('Use trafficStatusDescriptor instead')
+const TrafficStatus$json = {
+  '1': 'TrafficStatus',
+  '2': [
+    {'1': 'TRAFFIC_UNAVAILABLE', '2': 0},
+    {'1': 'TRAFFIC_WARMING_UP', '2': 1},
+    {'1': 'TRAFFIC_OBSERVED', '2': 2},
+    {'1': 'TRAFFIC_PARTIAL', '2': 3},
+    {'1': 'TRAFFIC_PROFILE_FILTERED', '2': 4},
+  ],
+};
+
+/// Descriptor for `TrafficStatus`. Decode as a `google.protobuf.EnumDescriptorProto`.
+final $typed_data.Uint8List trafficStatusDescriptor = $convert.base64Decode(
+    'Cg1UcmFmZmljU3RhdHVzEhcKE1RSQUZGSUNfVU5BVkFJTEFCTEUQABIWChJUUkFGRklDX1dBUk'
+    '1JTkdfVVAQARIUChBUUkFGRklDX09CU0VSVkVEEAISEwoPVFJBRkZJQ19QQVJUSUFMEAMSHAoY'
+    'VFJBRkZJQ19QUk9GSUxFX0ZJTFRFUkVEEAQ=');
+
 @$core.Deprecated('Use commandStatusDescriptor instead')
 const CommandStatus$json = {
   '1': 'CommandStatus',
@@ -1007,6 +1025,52 @@ final $typed_data.Uint8List deviceHealthDescriptor = $convert.base64Decode(
     'CgxEZXZpY2VIZWFsdGgSPQoKY29tcG9uZW50cxgBIAMoCzIdLnBvY2tldG5ldC52MS5Db21wb2'
     '5lbnRIZWFsdGhSCmNvbXBvbmVudHM=');
 
+@$core.Deprecated('Use observedTrafficDescriptor instead')
+const ObservedTraffic$json = {
+  '1': 'ObservedTraffic',
+  '2': [
+    {
+      '1': 'status',
+      '3': 1,
+      '4': 1,
+      '5': 14,
+      '6': '.pocketnet.v1.TrafficStatus',
+      '10': 'status'
+    },
+    {'1': 'observed_bytes', '3': 2, '4': 1, '5': 4, '10': 'observedBytes'},
+    {'1': 'window_ms', '3': 3, '4': 1, '5': 13, '10': 'windowMs'},
+    {'1': 'estimated', '3': 4, '4': 1, '5': 8, '10': 'estimated'},
+  ],
+};
+
+/// Descriptor for `ObservedTraffic`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List observedTrafficDescriptor = $convert.base64Decode(
+    'Cg9PYnNlcnZlZFRyYWZmaWMSMwoGc3RhdHVzGAEgASgOMhsucG9ja2V0bmV0LnYxLlRyYWZmaW'
+    'NTdGF0dXNSBnN0YXR1cxIlCg5vYnNlcnZlZF9ieXRlcxgCIAEoBFINb2JzZXJ2ZWRCeXRlcxIb'
+    'Cgl3aW5kb3dfbXMYAyABKA1SCHdpbmRvd01zEhwKCWVzdGltYXRlZBgEIAEoCFIJZXN0aW1hdG'
+    'Vk');
+
+@$core.Deprecated('Use ssidTrafficDescriptor instead')
+const SsidTraffic$json = {
+  '1': 'SsidTraffic',
+  '2': [
+    {'1': 'ssid', '3': 1, '4': 1, '5': 9, '10': 'ssid'},
+    {
+      '1': 'traffic',
+      '3': 2,
+      '4': 1,
+      '5': 11,
+      '6': '.pocketnet.v1.ObservedTraffic',
+      '10': 'traffic'
+    },
+  ],
+};
+
+/// Descriptor for `SsidTraffic`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List ssidTrafficDescriptor = $convert.base64Decode(
+    'CgtTc2lkVHJhZmZpYxISCgRzc2lkGAEgASgJUgRzc2lkEjcKB3RyYWZmaWMYAiABKAsyHS5wb2'
+    'NrZXRuZXQudjEuT2JzZXJ2ZWRUcmFmZmljUgd0cmFmZmlj');
+
 @$core.Deprecated('Use observedDeviceDescriptor instead')
 const ObservedDevice$json = {
   '1': 'ObservedDevice',
@@ -1038,6 +1102,14 @@ const ObservedDevice$json = {
     {'1': 'related_ap_bssid', '3': 11, '4': 1, '5': 9, '10': 'relatedApBssid'},
     {'1': 'source_scope', '3': 12, '4': 1, '5': 9, '10': 'sourceScope'},
     {'1': 'security', '3': 13, '4': 1, '5': 9, '10': 'security'},
+    {
+      '1': 'traffic',
+      '3': 14,
+      '4': 1,
+      '5': 11,
+      '6': '.pocketnet.v1.ObservedTraffic',
+      '10': 'traffic'
+    },
   ],
 };
 
@@ -1051,7 +1123,8 @@ final $typed_data.Uint8List observedDeviceDescriptor = $convert.base64Decode(
     'RTZWVuTXMSSwoRYXNzb2NpYXRpb25fc3RhdGUYCiABKA4yHi5wb2NrZXRuZXQudjEuQXNzb2Np'
     'YXRpb25TdGF0ZVIQYXNzb2NpYXRpb25TdGF0ZRIoChByZWxhdGVkX2FwX2Jzc2lkGAsgASgJUg'
     '5yZWxhdGVkQXBCc3NpZBIhCgxzb3VyY2Vfc2NvcGUYDCABKAlSC3NvdXJjZVNjb3BlEhoKCHNl'
-    'Y3VyaXR5GA0gASgJUghzZWN1cml0eQ==');
+    'Y3VyaXR5GA0gASgJUghzZWN1cml0eRI3Cgd0cmFmZmljGA4gASgLMh0ucG9ja2V0bmV0LnYxLk'
+    '9ic2VydmVkVHJhZmZpY1IHdHJhZmZpYw==');
 
 @$core.Deprecated('Use observedDevicesRequestDescriptor instead')
 const ObservedDevicesRequest$json = {
@@ -1099,6 +1172,14 @@ const ObservedDevicesPage$json = {
     {'1': 'sampled_at_ms', '3': 5, '4': 1, '5': 3, '10': 'sampledAtMs'},
     {'1': 'coverage', '3': 6, '4': 1, '5': 9, '10': 'coverage'},
     {'1': 'total_count', '3': 7, '4': 1, '5': 13, '10': 'totalCount'},
+    {
+      '1': 'ssid_traffic',
+      '3': 8,
+      '4': 3,
+      '5': 11,
+      '6': '.pocketnet.v1.SsidTraffic',
+      '10': 'ssidTraffic'
+    },
   ],
 };
 
@@ -1108,7 +1189,9 @@ final $typed_data.Uint8List observedDevicesPageDescriptor = $convert.base64Decod
     'JzZXJ2ZWREZXZpY2VSB2RldmljZXMSJgoPbmV4dF9wYWdlX3Rva2VuGAIgASgJUg1uZXh0UGFn'
     'ZVRva2VuEh4KCmdlbmVyYXRpb24YAyABKARSCmdlbmVyYXRpb24SHAoJdHJ1bmNhdGVkGAQgAS'
     'gIUgl0cnVuY2F0ZWQSIgoNc2FtcGxlZF9hdF9tcxgFIAEoA1ILc2FtcGxlZEF0TXMSGgoIY292'
-    'ZXJhZ2UYBiABKAlSCGNvdmVyYWdlEh8KC3RvdGFsX2NvdW50GAcgASgNUgp0b3RhbENvdW50');
+    'ZXJhZ2UYBiABKAlSCGNvdmVyYWdlEh8KC3RvdGFsX2NvdW50GAcgASgNUgp0b3RhbENvdW50Ej'
+    'wKDHNzaWRfdHJhZmZpYxgIIAMoCzIZLnBvY2tldG5ldC52MS5Tc2lkVHJhZmZpY1ILc3NpZFRy'
+    'YWZmaWM=');
 
 @$core.Deprecated('Use setCaptureProfileRequestDescriptor instead')
 const SetCaptureProfileRequest$json = {

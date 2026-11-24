@@ -159,12 +159,23 @@ bool Runtime::observed_devices(const v1::ObservedDevicesRequest& request, v1::Ob
     response.set_coverage(view->summary.coverage());
     if (view->summary.has_sampled_at_ms()) response.set_sampled_at_ms(view->summary.sampled_at_ms());
     std::size_t count = 0;
+    std::unordered_set<std::string> returned_ssids;
     for (const auto& device : view->devices) {
         if (request.kind() != v1::OBSERVED_KIND_UNSPECIFIED && device.kind() != request.kind()) continue;
         if (!request.ssid_filter().empty() && device.ssid() != request.ssid_filter()) continue;
         if (!request.bssid_filter().empty() && device.bssid() != request.bssid_filter() &&
             device.related_ap_bssid() != request.bssid_filter()) continue;
-        if (count >= offset && count - offset < length) *response.add_devices() = device;
+        if (count >= offset && count - offset < length) {
+            *response.add_devices() = device;
+            if (device.kind() == v1::AP && !device.ssid().empty() && returned_ssids.insert(device.ssid()).second) {
+                const auto summary = view->ssid_traffic.find(device.ssid());
+                if (summary != view->ssid_traffic.end()) {
+                    auto* entry = response.add_ssid_traffic();
+                    entry->set_ssid(summary->first);
+                    *entry->mutable_traffic() = summary->second;
+                }
+            }
+        }
         ++count;
     }
     response.set_total_count(count);
@@ -260,6 +271,7 @@ void Runtime::sample_system() {
 }
 
 void Runtime::sample_wireless() {
+    WirelessTraffic traffic;
     auto next_fallback = Clock::time_point{};
     while (!stop_) {
         const auto start = Clock::now();
@@ -270,6 +282,7 @@ void Runtime::sample_wireless() {
             run_control("pressure_light", random_id());
             next_fallback = start + 30s;
         }
+        auto ssid_traffic = traffic.update(result, policy, start);
         const auto state = result.capture.datasource_state() + "/" + result.capture.coverage() + "/" + result.capture.reason();
         if (state != capture_state_) {
             const bool active = result.capture.has_datasource_running() && result.capture.datasource_running() &&
@@ -315,7 +328,8 @@ void Runtime::sample_wireless() {
             policy_ = std::move(policy);
             capture_ = std::move(result.capture);
             wireless_ = std::move(result.wireless);
-            view_ = std::make_shared<DeviceView>(DeviceView{std::move(result.devices), wireless_, ++generation_});
+            view_ = std::make_shared<DeviceView>(
+                DeviceView{std::move(result.devices), wireless_, std::move(ssid_traffic), ++generation_});
             const auto now = boottime_ms();
             for (auto cursor = cursors_.begin(); cursor != cursors_.end();) {
                 if (cursor->second.expires <= now || !active) cursor = cursors_.erase(cursor);

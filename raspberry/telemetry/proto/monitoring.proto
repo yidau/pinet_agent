@@ -284,6 +284,27 @@ enum AssociationState {
   CONFIRMED = 2;
 }
 
+enum TrafficStatus {
+  TRAFFIC_UNAVAILABLE = 0;
+  TRAFFIC_WARMING_UP = 1;
+  TRAFFIC_OBSERVED = 2;
+  TRAFFIC_PARTIAL = 3;
+  TRAFFIC_PROFILE_FILTERED = 4;
+}
+
+// Data bytes observed by the managed monitor, summed over the reported window.
+message ObservedTraffic {
+  optional TrafficStatus status = 1;
+  optional uint64 observed_bytes = 2;
+  optional uint32 window_ms = 3;
+  optional bool estimated = 4;
+}
+
+message SsidTraffic {
+  optional string ssid = 1;
+  optional ObservedTraffic traffic = 2;
+}
+
 message ObservedDevice {
   optional string device_key = 1;
   optional string mac = 2;
@@ -298,6 +319,7 @@ message ObservedDevice {
   optional string related_ap_bssid = 11;
   optional string source_scope = 12;
   optional string security = 13;
+  optional ObservedTraffic traffic = 14;
 }
 
 message ObservedDevicesRequest {
@@ -317,6 +339,8 @@ message ObservedDevicesPage {
   optional int64 sampled_at_ms = 5;
   optional string coverage = 6;
   optional uint32 total_count = 7;
+  // For SSIDs represented on this page, computed before filtering and paging.
+  repeated SsidTraffic ssid_traffic = 8;
 }
 
 message SetCaptureProfileRequest {

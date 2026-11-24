@@ -274,6 +274,34 @@ class AssociationState extends $pb.ProtobufEnum {
   const AssociationState._(super.value, super.name);
 }
 
+class TrafficStatus extends $pb.ProtobufEnum {
+  static const TrafficStatus TRAFFIC_UNAVAILABLE =
+      TrafficStatus._(0, _omitEnumNames ? '' : 'TRAFFIC_UNAVAILABLE');
+  static const TrafficStatus TRAFFIC_WARMING_UP =
+      TrafficStatus._(1, _omitEnumNames ? '' : 'TRAFFIC_WARMING_UP');
+  static const TrafficStatus TRAFFIC_OBSERVED =
+      TrafficStatus._(2, _omitEnumNames ? '' : 'TRAFFIC_OBSERVED');
+  static const TrafficStatus TRAFFIC_PARTIAL =
+      TrafficStatus._(3, _omitEnumNames ? '' : 'TRAFFIC_PARTIAL');
+  static const TrafficStatus TRAFFIC_PROFILE_FILTERED =
+      TrafficStatus._(4, _omitEnumNames ? '' : 'TRAFFIC_PROFILE_FILTERED');
+
+  static const $core.List<TrafficStatus> values = <TrafficStatus>[
+    TRAFFIC_UNAVAILABLE,
+    TRAFFIC_WARMING_UP,
+    TRAFFIC_OBSERVED,
+    TRAFFIC_PARTIAL,
+    TRAFFIC_PROFILE_FILTERED,
+  ];
+
+  static final $core.List<TrafficStatus?> _byValue =
+      $pb.ProtobufEnum.$_initByValueList(values, 4);
+  static TrafficStatus? valueOf($core.int value) =>
+      value < 0 || value >= _byValue.length ? null : _byValue[value];
+
+  const TrafficStatus._(super.value, super.name);
+}
+
 class CommandStatus extends $pb.ProtobufEnum {
   static const CommandStatus COMMAND_STATUS_UNSPECIFIED =
       CommandStatus._(0, _omitEnumNames ? '' : 'COMMAND_STATUS_UNSPECIFIED');
