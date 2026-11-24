@@ -30,6 +30,7 @@ class _RadioLabPageState extends State<RadioLabPage> {
   bool _pending = true;
   bool _stopping = false;
   bool _finished = false;
+  bool _polling = false;
   String? _error;
   String _kind = 'ssid_lab';
 
@@ -96,9 +97,13 @@ class _RadioLabPageState extends State<RadioLabPage> {
   }
 
   Future<void> _tick() async {
-    if (!mounted || _pending || _finished) return;
+    if (!mounted || _pending || _finished || _polling) return;
+    _polling = true;
     final previous = _status;
-    if (previous == null || previous.sessionId.isEmpty) return;
+    if (previous == null || previous.sessionId.isEmpty) {
+      _polling = false;
+      return;
+    }
     try {
       final next = await widget.connection.controlRadioLab(
         action: _stopping ? 'status' : 'renew',
@@ -115,6 +120,8 @@ class _RadioLabPageState extends State<RadioLabPage> {
       }
     } catch (_) {
       if (mounted) setState(() => _error = '与树莓派通信中断；本机租约将自动停止发射。');
+    } finally {
+      _polling = false;
     }
   }
 

@@ -202,7 +202,10 @@ class Lab:
                 return dict(accepted=False, phase="refused", reason="session_mismatch")
             if action == "renew":
                 if self.phase not in ("preparing", "running") or time.monotonic() >= self.hard_deadline:
-                    return dict(accepted=False, phase="refused", reason="session_not_renewable")
+                    response = self.status()
+                    response["accepted"] = False
+                    response["reason"] = "session_not_renewable"
+                    return response
                 self.deadline = time.monotonic() + LEASE_SECONDS
                 return self.status()
             if action == "stop":
@@ -360,10 +363,15 @@ def main():
             with client:
                 client.settimeout(1.0)
                 try:
-                    request = client.recv(4096)
-                    if not request or len(request) >= 4096:
+                    request = bytearray()
+                    while b"\n" not in request and len(request) < 4096:
+                        chunk = client.recv(min(1024, 4096 - len(request)))
+                        if not chunk:
+                            break
+                        request.extend(chunk)
+                    if b"\n" not in request or len(request) >= 4096:
                         continue
-                    result = lab.request(json.loads(request))
+                    result = lab.request(json.loads(request.split(b"\n", 1)[0]))
                 except (ValueError, TypeError, KeyError):
                     result = dict(accepted=False, phase="refused", reason="invalid_request")
                 client.sendall((json.dumps(result, separators=(",", ":")) + "\n").encode())
