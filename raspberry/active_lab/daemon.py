@@ -85,7 +85,9 @@ def profile_for(profile_id, bssid, ssid, channel):
 def valid_observation(o):
     if not isinstance(o, dict):
         return False
-    if not isinstance(o.get("bssid"), str) or not isinstance(o.get("ssid"), str):
+    if not isinstance(o.get("bssid"), str) or not HEX_MAC.fullmatch(o["bssid"]):
+        return False
+    if not isinstance(o.get("ssid"), str) or not SAFE_SSID.fullmatch(o["ssid"]):
         return False
     if not isinstance(o.get("channel"), str) or not re.fullmatch(r"[1-9]|10|11", o["channel"]):
         return False
