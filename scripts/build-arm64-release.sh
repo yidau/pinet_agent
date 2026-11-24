@@ -65,7 +65,7 @@ if [[ "$libraries" == *'not found'* ]]; then
 fi
 
 install -d -- "$work/payload/raspberry"
-for component in config control enrollment time_sync wireless; do
+for component in config control enrollment time_sync wireless active_lab; do
     cp -a -- "$source_dir/raspberry/$component" "$work/payload/raspberry/"
 done
 find "$work/payload" -type d -name __pycache__ -prune -exec rm -rf -- {} +

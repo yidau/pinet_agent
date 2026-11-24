@@ -11,7 +11,8 @@ PocketNet is a Raspberry Pi based passive wireless security observation device.
 - The Flutter app provides a live dashboard, normal monitoring, and a high-risk archive. Ordinary observations remain in RAM. High-risk deliveries use a bounded queue on the Pi for up to 180 seconds and are acknowledged after the phone commits them to SQLite.
 - BLE enrollment, BLE time synchronization and the small USB/Kismet datasource manager remain Python components for now. Ubuntu 22.04 deployment must provide Python 3.12 for the BLE time-sync service.
 - There is no MCP server, MCP SDK, or Agent runtime on the Raspberry Pi. The business interface is gRPC/Protobuf.
-- The mobile navigation reserves the deep inspection and active testing pages for future releases.
+- A controlled active-radio lab may use MDK4 on the same USB adapter after Kismet releases its datasource. Only local root-provisioned RF-isolated targets can be tested; the phone cannot supply arbitrary arguments. Probe and single-SSID demonstration templates are available, while Deauth/flood/other disruptive modes are disabled.
+- Lab sessions are bounded by a 20-second renewable lease and a 10-minute hard limit; restoring Kismet is required after every session. State and logs remain RAM-first. The phone's AP detail page can open a lab session and show execution/recovery status; the deep inspection tab remains reserved.
 
 ## Repository layout
 

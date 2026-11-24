@@ -155,6 +155,10 @@ if [[ -f /etc/pocketnet/usb-monitor.conf && ! -e /etc/piagent-kismet/monitor.jso
 fi
 if [[ -f /etc/piagent-kismet/monitor.json ]]; then
     systemctl enable --now piagent-wireless-manager.service
+    # Lab daemon is idle by default. The installed profile remains disabled until an operator
+    # provisions an owned, RF-isolated target explicitly.
+    systemctl start piagent-active-lab.service || \
+        echo 'Radio lab unavailable; passive monitoring remains usable.' >&2
 else
     echo 'No USB monitor is assigned. Kismet will start in degraded mode.'
 fi

@@ -24,6 +24,8 @@ for executable in /opt/pocketnet/python/bin/python3.12 /usr/bin/kismet /usr/bin/
 done
 
 install -d -m 0755 "$root/etc/pocketnet" "$root/etc/sysusers.d" "$root/etc/hostapd"
+install -m 0600 "$source_dir/raspberry/config/runtime/lab-profiles.example.json" \
+    "$root/etc/pocketnet/lab-profiles.json"
 install -m 0644 "$source_dir/deploy/image/usb-monitor.conf" "$root/etc/pocketnet/usb-monitor.conf"
 install -D -m 0755 "$source_dir/deploy/image/firstboot.sh" "$root/usr/local/lib/pocketnet/firstboot.sh"
 install -m 0644 "$source_dir/deploy/image/firstboot.service" "$unit_dir/pocketnet-firstboot.service"
@@ -39,6 +41,7 @@ install -m 0644 "$source_dir/raspberry/config/time-sync/piagent-time-sync.sysuse
     "$source_dir/raspberry/config/enrollment/piagent-enrollment.sysusers.conf" "$root/etc/sysusers.d/"
 install -m 0644 "$source_dir/deploy/systemd/pocketnet-kismet.sysusers.conf" "$root/etc/sysusers.d/"
 install -m 0644 "$source_dir/deploy/systemd/piagent-control.sysusers.conf" "$root/etc/sysusers.d/piagent-control.conf"
+install -m 0644 "$release/raspberry/config/runtime/piagent-active-lab.service" "$unit_dir/"
 install -m 0644 "$source_dir/deploy/systemd/piagent-control.socket" \
     "$source_dir/deploy/systemd/piagent-control@.service" "$unit_dir/"
 for service in piagent-clock piagent-enrollment-wifi piagent-telemetry piagent-wireless-manager; do
@@ -65,7 +68,7 @@ printf '%s\n' "$(date -u +%s)" > "$root/etc/pocketnet/build-epoch"
 chmod 0644 "$root/etc/pocketnet/build-epoch"
 
 systemd-sysusers --root="$root"
-systemctl --root="$root" enable piagent-control.socket
+systemctl --root="$root" enable piagent-control.socket piagent-active-lab.service
 systemctl --root="$root" mask hostapd.service swapfile.swap dphys-swapfile.service
 systemctl --root="$root" enable zramswap.service
 if [[ -e "$root/lib/systemd/system/kismet.service" || -e "$root/usr/lib/systemd/system/kismet.service" ]]; then

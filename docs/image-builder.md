@@ -11,9 +11,9 @@
 
 构建过程将官方 Ubuntu 22.04.5 树莓派镜像的签名、SHA-256 和缓存分别核对，在 WSL 的临时工作副本上挂载 loop 分区，通过 QEMU ARM64 chroot 安装目标依赖和编译。构建日志保存在 /var/cache/pocketnet-image/logs/ 下。生成的 IMG、软件更新包、manifest.json 和 SHA256SUMS 放在 dist/。
 
-### 可选安装 MDK4 软件包
+### MDK4 ARM64 软件包与实验服务
 
-需要在新设备上预装 Ubuntu 的 MDK4 软件包时，构建镜像前设置 `POCKETNET_INCLUDE_MDK4=true`。常规镜像的默认值为 `false`。镜像清单的 `mdk4` 字段记录实际的软件包状态、版本和架构。
+当前默认构建会预装 Ubuntu 的 MDK4 软件包（`POCKETNET_INCLUDE_MDK4=true`）。若只需要纯被动镜像，可设为 `false`。镜像清单的 `mdk4` 字段记录软件包状态、版本和架构。已烧录的旧设备需要通过有线 SSH 另行安装 `mdk4`，仅使用 PocketNet 软件更新包不会安装发行版软件包。
 
 新镜像和通过有线 SSH 安装了检查脚本的旧设备，都可以用以下只读命令验收。
 
@@ -104,3 +104,14 @@ Only /dev/zram* should appear in swapon --show. A block-backed swap device is a 
 ## Kismet API credential lifecycle
 
 The Kismet HTTP session database (including Kismet API tokens) is volatile at `/run/piagent-kismet/.kismet/session.db`. On each Kismet start, `piagent-kismet-provision.service` authenticates using the durable Kismet administrator credentials and creates/verifies the readonly and optional datasource-admin API tokens. Runtime consumers read `/run/piagent-kismet/client.env` and `/run/piagent-kismet/monitor.key`; these files are intentionally not persisted. The provisioning service is ordered before Telemetry and the wireless manager. Kismet restart also refreshes the provisioner and its consumers. Existing devices are migrated by the release installer, which removes legacy persisted API-token files from `/etc/piagent-kismet/`.
+
+
+### 受控无线实验（V1）
+
+新镜像包含 \`piagent-active-lab.service\`。在已有设备升级软件包后，该服务也安装并启用；需要外接 USB Monitor 网卡完成绑定后才能进入实验模式。
+
+**默认不可发射**：\`/etc/pocketnet/lab-profiles.json\` 不会由普通升级覆盖；新镜像提供全禁用的示例配置。只在 RF 隔离的自有靶场，由设备所有者通过有线 SSH 修改配置，明确标记 enabled、rf_isolated，提供实验 AP 的 SSID/BSSID/信道及独立模拟 BSSID。不能将公共环境中发现的 AP 自动作测试授权。
+
+手机端在常态监控的 AP 详情页选择“查看授权无线安全验证”，由设备端核验新鲜 AP 观测与本地配置，并提供 Probe / 实验 SSID 两种受限模板。MDK4 运行时，Kismet 数据源被关闭；结束、失联或最大 10 分钟后停止并恢复 Kismet。单网卡没有独立实时 Kismet 检测证据，不应宣称攻击成功。会话日志、状态与实验临时身份仅在 /run；不会新增持续 SD 日志。
+
+检验已安装服务：\`systemctl status piagent-active-lab.service\`、\`/opt/pocketnet/deploy/mdk4-package-status\`。在真实 RF 隔离靶场完成网卡交接/收发验收前，不能认定注入有效。

@@ -82,6 +82,9 @@ grep -qx 'SocketGroup=piagent-control' "$unit_dir/piagent-control.socket"
 grep -qx 'Accept=yes' "$unit_dir/piagent-control.socket"
 test -f "$unit_dir/piagent-control@.service"
 test -f "$root$app/raspberry/control/recovery.py"
+test -f "$root$app/raspberry/active_lab/daemon.py"
+test -f "$unit_dir/piagent-active-lab.service"
+systemctl --root="$root" is-enabled piagent-active-lab.service
 systemctl --root="$root" is-enabled piagent-control.socket
 if awk '$1 !~ /^#/ && NF >= 3 && $3 == "swap" { found=1 } END { exit !found }' "$root/etc/fstab"; then
     echo 'Block-backed swap entry remains in /etc/fstab.' >&2
