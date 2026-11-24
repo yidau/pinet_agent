@@ -27,7 +27,9 @@ constexpr std::size_t kResponseLimit = 1024 * 1024;
 constexpr size_t kAccessPointLimit = 128;
 constexpr size_t kClientLimit = 256;
 constexpr size_t kDeviceLimit = kAccessPointLimit + kClientLimit;
+constexpr size_t kDevicePageSize = 64;
 constexpr size_t kPriorityLimit = 8;
+constexpr auto kRequestTimeout = std::chrono::milliseconds(1200);
 
 int64_t unixMillis() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -322,8 +324,14 @@ struct Response {
     bool reachable = false;
 };
 
+struct DevicePage {
+    size_t offset;
+    size_t length;
+};
+
 Response request(const std::string& base, const std::string& key, const std::string& path,
-                 const Json& form = Json(), bool deviceView = false) {
+                 const Json& form = Json(), std::optional<DevicePage> page = std::nullopt,
+                 std::chrono::milliseconds timeout = kRequestTimeout) {
     static const bool curlReady = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
     if (!curlReady) return {};
     std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> client(curl_easy_init(), curl_easy_cleanup);
@@ -337,7 +345,7 @@ Response request(const std::string& base, const std::string& key, const std::str
     curl_easy_setopt(client.get(), CURLOPT_PROXY, "");
     curl_easy_setopt(client.get(), CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(client.get(), CURLOPT_CONNECTTIMEOUT_MS, 400L);
-    curl_easy_setopt(client.get(), CURLOPT_TIMEOUT_MS, 1200L);
+    curl_easy_setopt(client.get(), CURLOPT_TIMEOUT_MS, static_cast<long>(timeout.count()));
     curl_easy_setopt(client.get(), CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(client.get(), CURLOPT_WRITEFUNCTION, collectBody);
     curl_easy_setopt(client.get(), CURLOPT_WRITEDATA, &response);
@@ -347,7 +355,10 @@ Response request(const std::string& base, const std::string& key, const std::str
             curl_easy_escape(client.get(), raw.data(), static_cast<int>(raw.size())), curl_free);
         if (!encoded) return {};
         post = "json=" + std::string(encoded.get());
-        if (deviceView) post += "&draw=1&start=0&length=" + std::to_string(kDeviceLimit);
+        if (page) {
+            post += "&draw=1&start=" + std::to_string(page->offset)
+                + "&length=" + std::to_string(page->length);
+        }
         curl_easy_setopt(client.get(), CURLOPT_POSTFIELDS, post.c_str());
     }
     const auto result = curl_easy_perform(client.get());
@@ -433,18 +444,56 @@ Json deviceFields(int64_t now) {
     };
 }
 
+struct DeviceWindow {
+    Json rows = Json::array();
+    bool available = false;
+    bool limited = false;
+};
+
+DeviceWindow readDeviceWindow(const std::string& base, const std::string& key,
+                              const std::string& path, const std::string& source, int64_t now) {
+    DeviceWindow window;
+    const auto fields = deviceFields(now);
+    const auto deadline = Clock::now() + kRequestTimeout;
+    std::optional<uint64_t> expectedTotal;
+    for (size_t offset = 0; offset < kDeviceLimit; offset += kDevicePageSize) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
+        if (remaining.count() <= 0) break;
+        const auto length = std::min(kDevicePageSize, kDeviceLimit - offset);
+        auto page = request(base, key, path, fields, DevicePage{offset, length}, remaining).data;
+        const auto total = unsignedNumber(field(page, "recordsFiltered"));
+        if (!total || !field(page, "data").is_array() || *total < offset) break;
+        auto& rows = page.at("data");
+        if (rows.size() != std::min<uint64_t>(length, *total - offset)) break;
+        if (expectedTotal && *expectedTotal != *total) window.limited = true;
+        expectedTotal = total;
+        window.available = true;
+        for (auto& row : rows) {
+            if (string(field(row, "kismet.device.base.phyname"), 24) != "IEEE802.11") continue;
+            if (!exclusivelySeenBy(row, source)) {
+                window.limited = true;
+                continue;
+            }
+            // Source attribution has been checked. Discard the per-source counters before retaining the row.
+            row.erase("kismet.device.base.seenby");
+            window.rows.push_back(std::move(row));
+        }
+        if (offset + rows.size() == *total) return window;
+    }
+    window.limited = true;
+    return window;
+}
+
 struct AccessPoint {
     v1::PriorityAP metadata;
     int64_t lastSeen;
 };
 
-v1::WirelessSummary summarize(const Json& data, const std::string& source, int64_t now,
+v1::WirelessSummary summarize(const DeviceWindow& window, int64_t now,
                               std::map<std::string, AccessPoint>& aps,
                               std::vector<v1::ObservedDevice>& devices) {
     v1::WirelessSummary summary;
-    const auto& rows = field(data, "data");
-    auto total = unsignedNumber(field(data, "recordsFiltered"));
-    if (!total || !rows.is_array() || rows.size() > kDeviceLimit || *total < rows.size()) {
+    if (!window.available) {
         summary.set_coverage("source_view_unavailable");
         return summary;
     }
@@ -468,13 +517,8 @@ v1::WirelessSummary summarize(const Json& data, const std::string& source, int64
         item.set_last_seen_ms(last_seen);
         return item;
     };
-    bool limited = *total > rows.size();
-    for (const auto& row : rows) {
-        if (string(field(row, "kismet.device.base.phyname"), 24) != "IEEE802.11") continue;
-        if (!exclusivelySeenBy(row, source)) {
-            limited = true;
-            continue;
-        }
+    bool limited = window.limited;
+    for (const auto& row : window.rows) {
         auto address = mac(field(row, "kismet.device.base.macaddr"));
         if (address.empty()) {
             limited = true;
@@ -750,9 +794,10 @@ KismetSample KismetCollector::sample(bool include_devices) {
     }
     std::string upper = monitor.source;
     for (auto& ch : upper) if (ch >= 'a' && ch <= 'f') ch -= 'a' - 'A';
-    const auto view = request(url_, api_key_, "/devices/views/seenby-" + upper + "/devices.json", deviceFields(now), true);
+    const auto view = readDeviceWindow(url_, api_key_, "/devices/views/seenby-" + upper + "/devices.json",
+                                      monitor.source, now);
     std::map<std::string, AccessPoint> aps;
-    sample.wireless = summarize(view.data, monitor.source, now, aps, sample.devices);
+    sample.wireless = summarize(view, now, aps, sample.devices);
     if (sample.wireless.has_ap_count()) {
         sample.capture.set_tracked_devices(uint64_t(sample.wireless.ap_count()) + sample.wireless.client_count());
     }

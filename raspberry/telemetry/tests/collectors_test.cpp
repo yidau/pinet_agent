@@ -157,7 +157,24 @@ private:
         const bool approved = request.find("Cookie: KISMET=fixture-read-only") != std::string::npos;
         const bool found = matched != responses_.end();
         const auto status = !approved ? "401 Unauthorized" : (found ? "200 OK" : "404 Not Found");
-        const auto body = approved && found ? matched->second.dump() : "{}";
+        std::string body = "{}";
+        if (approved && found) {
+            const auto& doc = matched->second;
+            const auto start = request.find("&start=");
+            const auto length = request.find("&length=");
+            if (doc.contains("data") && start != std::string::npos && length != std::string::npos) {
+                const auto offset = std::strtoul(request.c_str() + start + 7, nullptr, 10);
+                const auto count = std::strtoul(request.c_str() + length + 8, nullptr, 10);
+                const auto& all = doc.at("data");
+                auto rows = Json::array();
+                for (size_t index = offset; index < all.size() && index - offset < count; ++index) {
+                    rows.push_back(all.at(index));
+                }
+                body = Json{{"data", std::move(rows)}, {"recordsFiltered", doc.at("recordsFiltered")}}.dump();
+            } else {
+                body = doc.dump();
+            }
+        }
         const auto wire = std::string("HTTP/1.1 ") + status + "\r\nContent-Length: "
                         + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
         for (size_t offset = 0; offset < wire.size();) {
@@ -200,6 +217,12 @@ void kismetSample() {
     auto stale = device;
     stale["kismet.device.base.macaddr"] = "20:00:00:00:00:04";
     stale["kismet.device.base.last_time"] = now - 301;
+    stale["kismet.device.base.seenby"]["1"]["kismet.common.seenby.packet_rrd"] = std::string(9 * 1024, '0');
+    auto rows = Json::array({device, mixed});
+    for (size_t index = 0; index < 128; ++index) rows.push_back(stale);
+    rows.push_back(station);
+    expect(rows.dump().size() > 1024 * 1024, "fixture exceeds the per-response limit as a single page");
+    const auto total = rows.size();
     Json alert = {{"kismet.alert.timestamp", now - 20}, {"kismet.alert.hash", 42}, {"kismet.alert.severity", 20},
                   {"kismet.alert.header", "BEACON_CHANGE"}, {"kismet.alert.text", "A test alert"},
                   {"kismet.alert.bssid", device["kismet.device.base.macaddr"]}};
@@ -223,7 +246,7 @@ void kismetSample() {
         {"/datasource/all_sources.json", choices},
         {"/packetchain/packet_stats.json", stats},
         {std::string("/devices/views/seenby-") + uppercase + "/devices.json",
-            {{"data", Json::array({device, mixed, station, stale})}, {"recordsFiltered", 4}}},
+            {{"data", std::move(rows)}, {"recordsFiltered", total}}},
         {"/alerts/all_alerts.json", Json::array({alert, unrelated})},
     });
     KismetCollector collector(fake.url, "fixture-read-only", f.path / "monitor.json");
@@ -232,13 +255,14 @@ void kismetSample() {
            "read only the selected Kismet datasource and current backlog");
     expect(!reading.capture.has_dropped_packets() && !reading.capture.has_processed_packets_per_second(),
            "unsupported packet counters remain unavailable");
-    expect(reading.wireless.ap_count() == 1 && reading.wireless.client_count() == 1 && reading.wireless.truncated(),
+    expect(reading.wireless.sampled_at_ms() > 0 && reading.wireless.ap_count() == 1
+           && reading.wireless.client_count() == 1 && reading.wireless.truncated(),
            "count deduplicated live metadata without mixed or stale readings");
     expect(reading.wireless.priority_aps_size() == 1 && reading.wireless.priority_aps(0).frequency_khz() == 2462000,
            "priority AP holds lightweight measured metadata");
     expect(reading.devices.size() == 2 &&
            reading.devices[1].association_state() == pocketnet::v1::CONFIRMED,
-           "explicit Kismet evidence relates the client to the observed AP");
+           "explicit Kismet evidence relates the client and AP from separate pages");
     const auto alerts = collector.sample_alerts();
     expect(alerts.reachable && alerts.events.size() == 2 &&
            alerts.events[0].risk_class() == pocketnet::v1::SUSPICIOUS &&
