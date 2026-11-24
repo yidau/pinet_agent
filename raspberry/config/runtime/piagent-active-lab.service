@@ -1,0 +1,32 @@
+[Unit]
+Description=PocketNet isolated MDK4 radio lab
+Requires=piagent-wireless-manager.service
+After=piagent-wireless-manager.service piagent-kismet-provision.service
+ConditionPathExists=/etc/piagent-kismet/monitor.json
+
+[Service]
+Type=simple
+User=root
+Group=piagent-control
+WorkingDirectory=/opt/pocketnet/current
+ExecStart=/opt/pocketnet/python/bin/python3.12 -B -m raspberry.active_lab.daemon
+RuntimeDirectory=piagent-radio
+RuntimeDirectoryMode=0770
+UMask=0007
+Restart=on-failure
+RestartSec=2
+KillMode=control-group
+TimeoutStopSec=5
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_PACKET
+ReadWritePaths=/run/piagent-radio /run/piagent-wireless
+
+[Install]
+WantedBy=multi-user.target
