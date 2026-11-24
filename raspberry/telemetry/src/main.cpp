@@ -184,6 +184,55 @@ public:
         return grpc::Status::OK;
     }
 
+
+    grpc::Status ControlRadioLab(grpc::ServerContext* context, const v1::RadioLabRequest* request,
+                                  v1::RadioLabStatus* response) override {
+        auto access = control_access(*context, request->phone_id(), request->request_id());
+        if (!access.ok()) return access;
+        const auto& action = request->action();
+        if (action != "check" && action != "start" && action != "renew" &&
+            action != "stop" && action != "status") {
+            return {grpc::StatusCode::INVALID_ARGUMENT, "Unknown lab action"};
+        }
+        const v1::ObservedDevice* observed = nullptr;
+        v1::ObservedDevicesPage page;
+        if (action == "check" || action == "start") {
+            if (request->profile_id().empty() || request->bssid().empty() ||
+                (request->kind() != "probe" && request->kind() != "ssid_lab")) {
+                return {grpc::StatusCode::INVALID_ARGUMENT, "Missing lab target or kind"};
+            }
+            if (action == "start" && state_.snapshot().resource_pressure().level() == v1::LEVEL2_FALLBACK) {
+                response->set_phase("refused");
+                response->set_reason("resource_pressure");
+                return grpc::Status::OK;
+            }
+            v1::ObservedDevicesRequest devices;
+            devices.set_phone_id(request->phone_id());
+            devices.set_page_size(32);
+            devices.set_kind(v1::AP);
+            devices.set_bssid_filter(request->bssid());
+            std::string error;
+            if (!state_.observed_devices(devices, page, error)) {
+                return {grpc::StatusCode::INVALID_ARGUMENT, "Invalid lab observation"};
+            }
+            for (const auto& candidate : page.devices()) {
+                if (candidate.kind() == v1::AP && candidate.bssid() == request->bssid() &&
+                    candidate.has_last_seen_ms() && candidate.last_seen_ms() <= wall_ms() &&
+                    wall_ms() - candidate.last_seen_ms() <= 60000) {
+                    observed = &candidate;
+                    break;
+                }
+            }
+            if (!observed) {
+                response->set_phase("refused");
+                response->set_reason("observed_ap_not_fresh");
+                return grpc::Status::OK;
+            }
+        }
+        *response = run_radio_lab(*request, observed);
+        return grpc::Status::OK;
+    }
+
     grpc::Status RecoverComponent(grpc::ServerContext* context, const v1::RecoverComponentRequest* request,
                                    v1::ControlCommandResponse* response) override {
         auto access = control_access(*context, request->phone_id(), request->request_id());

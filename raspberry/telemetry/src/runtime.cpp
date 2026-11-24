@@ -458,7 +458,7 @@ void Runtime::publish() {
                 message.set_capability_version(2);
                 message.set_device_boot_id(device_boot_id_);
                 for (const char* name : {"device_pages", "capture_profiles", "device_recovery", "highrisk_ack",
-                                         "observation_mode"}) {
+                                         "observation_mode", "radio_lab_v1"}) {
                     message.add_supported_features(name);
                 }
                 *message.mutable_capture_policy() = policy_;
