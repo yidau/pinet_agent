@@ -48,7 +48,7 @@ def read_json(path):
 
 def profile_for(profile_id, bssid, ssid, channel):
     """All target values are matched against a root-provisioned lab profile."""
-    if profile_id and not SAFE_PROFILE.fullmatch(profile_id):
+    if not isinstance(profile_id, str) or (profile_id and not SAFE_PROFILE.fullmatch(profile_id)):
         return None
     root = read_json(PROFILES)
     if root.get("schema") != 1:
@@ -57,7 +57,8 @@ def profile_for(profile_id, bssid, ssid, channel):
     if not isinstance(entries, list) or len(entries) > 8:
         return None
     for p in entries:
-        if not isinstance(p, dict) or (profile_id and p.get("id") != profile_id):
+        if (not isinstance(p, dict) or not isinstance(p.get("id"), str)
+                or not SAFE_PROFILE.fullmatch(p["id"]) or (profile_id and p["id"] != profile_id)):
             continue
         if p.get("rf_isolated") is not True or p.get("enabled") is not True:
             return None
@@ -123,6 +124,12 @@ class Lab:
         with kismet_operation():
             marker = read_json(PAUSE_MARKER)
             if marker.get("owner") == "radio_lab":
+                stale = Path("/sys/class/net") / LAB_IFACE
+                if stale.exists():
+                    radio = radio_identity()
+                    if (stale / "phy80211").resolve(strict=True) != radio.phy:
+                        raise RuntimeError("stale_lab_interface_identity_mismatch")
+                    run_checked(IW, "dev", LAB_IFACE, "del")
                 PAUSE_MARKER.unlink(missing_ok=True)
 
     def status(self, accepted=True):
@@ -153,6 +160,8 @@ class Lab:
                 if profile is None or kind not in profile["allowed_tests"]:
                     return dict(accepted=False, phase="refused", reason="not_authorized_lab_target")
                 if action == "check":
+                    if PAUSE_MARKER.exists():
+                        return dict(accepted=False, phase="busy", reason="monitor_already_paused")
                     old = self.profile
                     self.profile = profile
                     response = self.status()
@@ -233,8 +242,10 @@ class Lab:
             run_checked(IP, "link", "set", LAB_IFACE, "up")
             run_checked(IW, "dev", LAB_IFACE, "set", "channel", str(self.profile["channel"]))
             if self.kind == "probe":
-                argv = [MDK4, LAB_IFACE, "p", "-e", self.profile["ssid"],
-                        "-t", self.profile["bssid"], "-s", "1"]
+                # MDK4's -e (SSID probe) and -t (target MAC) are separate probe
+                # workflows. This restricted template sends only a low-rate
+                # SSID probe on the already selected isolated lab channel.
+                argv = [MDK4, LAB_IFACE, "p", "-e", self.profile["ssid"], "-s", "1"]
             else:
                 # One whitelisted fake identity, 1 frame/s. Never use MDK4 defaults.
                 fake = RUN / "lab-ap.txt"
@@ -242,6 +253,10 @@ class Lab:
                 os.chmod(fake, 0o600)
                 argv = [MDK4, LAB_IFACE, "b", "-v", str(fake), "-t", "0",
                         "-w", "a", "-c", str(self.profile["channel"]), "-s", "1"]
+            if self.stop_event.is_set() or time.monotonic() >= self.deadline:
+                raise RuntimeError("session_cancelled")
+            if radio_identity() != radio:
+                raise RuntimeError("radio_identity_changed")
             proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
             with self.lock:
@@ -314,12 +329,20 @@ def main():
     RUN.mkdir(mode=0o770, parents=True, exist_ok=True)
     SOCKET.unlink(missing_ok=True)
     lab = Lab()
+    stopping = threading.Event()
+
+    def shutdown(_signum, _frame):
+        lab.stop_event.set()
+        stopping.set()
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind(str(SOCKET))
         os.chmod(SOCKET, 0o660)
         server.listen(4)
         server.settimeout(0.5)
-        while True:
+        while not stopping.is_set():
             try:
                 client, _ = server.accept()
             except socket.timeout:
@@ -334,6 +357,10 @@ def main():
                 except (ValueError, TypeError, KeyError):
                     result = dict(accepted=False, phase="refused", reason="invalid_request")
                 client.sendall((json.dumps(result, separators=(",", ":")) + "\n").encode())
+    lab.stop_event.set()
+    if lab.thread is not None:
+        lab.thread.join(timeout=40)
+    SOCKET.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
