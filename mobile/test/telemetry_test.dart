@@ -137,7 +137,7 @@ void main() {
     );
   });
 
-  testWidgets('reserved tabs show a placeholder without device actions', (
+  testWidgets('deep inspection reserved and lab tab links to AP discovery', (
     tester,
   ) async {
     await tester.pumpWidget(const PocketNetApp());
@@ -147,7 +147,10 @@ void main() {
     expect(find.text('尚未开放'), findsOneWidget);
     await tester.tap(find.text('主动测试'));
     await tester.pumpAndSettle();
-    expect(find.text('尚未开放'), findsOneWidget);
+    expect(find.text('前往探测模式选择 AP'), findsOneWidget);
+    await tester.tap(find.text('前往探测模式选择 AP'));
+    await tester.pumpAndSettle();
+    expect(find.text('常态监控'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
