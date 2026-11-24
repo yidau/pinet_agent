@@ -800,7 +800,9 @@ KismetAlerts KismetCollector::sample_alerts() const {
         const bool selected = name == "DEAUTHFLOOD" || name == "BCASTDISCON" ||
                               name == "DOT11CSAFLOOD" || name == "DOT11CSASPOOF";
         const bool supported = selected && severity >= 15 && !bssid.empty() && !description.empty();
-        event.set_confidence(supported ? v1::CORROBORATED : v1::LIMITED);
+        // One upstream WIDS alert is a useful risk signal, not independently
+        // corroborated proof of an attack, even at Kismet severity 20.
+        event.set_confidence(v1::LIMITED);
         event.set_risk_class(supported ? (severity >= 20 ? v1::CRITICAL : v1::HIGH) : v1::SUSPICIOUS);
         event.set_summary(supported ? "疑似高危无线行为" : "Kismet 无线异常观测");
         event.set_priority(severity >= 20 ? v1::P0 : (severity >= 15 ? v1::P1 : v1::P2));

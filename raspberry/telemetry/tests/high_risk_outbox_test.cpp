@@ -53,7 +53,8 @@ int main() {
         {
             HighRiskOutbox queue(fixture.path, "boot-a", clock);
             wait_for([&] { return queue.status().storage_available(); });
-            queue.submit(native_alert("native-1", v1::HIGH));
+            auto first_result = queue.submit(native_alert("native-1", v1::HIGH));
+            verify(first_result.get(), "high-risk enqueue only succeeds after durable commit");
             wait_for([&] { return queue.status().pending_count() == 1; });
             const auto delivery = queue.next_for("phone-a");
             verify(delivery.has_value(), "eligible after durable insert");
@@ -70,26 +71,36 @@ int main() {
             now = 181000;
             verify(!queue.next_for("phone-a"), "no send at the 180 second boundary");
             verify(queue.acknowledge("phone-a", first) == "expired", "no ACK at the boundary");
-            queue.submit(native_alert("native-2", v1::CRITICAL));
+            verify(queue.submit(native_alert("native-2", v1::CRITICAL)).get(), "persist critical event");
             wait_for([&] { return queue.status().pending_count() == 1; });
             const auto second = queue.next_for("phone-a");
             verify(second && queue.acknowledge("phone-a", second->durable_id()) == "acked", "valid durable ACK");
             verify(queue.acknowledge("phone-a", second->durable_id()) == "already_acked", "idempotent ACK");
-            queue.submit(native_alert("native-2", v1::CRITICAL));
-            queue.submit(native_alert("native-3", v1::HIGH));
+            verify(queue.submit(native_alert("native-2", v1::CRITICAL)).get(),
+                   "already committed event is safely deduplicated");
+            verify(queue.submit(native_alert("native-3", v1::HIGH)).get(), "persist another event");
             wait_for([&] { return queue.status().pending_count() == 1; });
         }
         {
             HighRiskOutbox queue(fixture.path, "boot-b", clock, 350);
             wait_for([&] { return queue.status().storage_available(); });
             verify(queue.status().previous_boot_discarded_count() == 1, "discard across device boots");
-            queue.submit(native_alert("critical-first", v1::CRITICAL, 200));
-            queue.submit(native_alert("lower-priority", v1::HIGH, 200));
+            verify(queue.submit(native_alert("critical-first", v1::CRITICAL, 200)).get(), "persist first critical");
+            verify(!queue.submit(native_alert("lower-priority", v1::HIGH, 200)).get(),
+                   "risk-priority rejection reports failed durability");
             wait_for([&] { return queue.status().overflow_rejected_count() == 1; });
-            queue.submit(native_alert("critical-latest", v1::CRITICAL, 200));
+            verify(queue.submit(native_alert("critical-latest", v1::CRITICAL, 200)).get(),
+                   "new critical evicts old at equal rank");
             wait_for([&] { return queue.status().overflow_evicted_count() == 1; });
             const auto latest = queue.next_for("phone-a");
             verify(latest && latest->event().event_id() == "critical-latest", "keep newest in the same risk class");
+        }
+        {
+            HighRiskOutbox broken(fixture.path / "missing-state-dir", "boot-c", clock);
+            wait_for([&] { return broken.status().storage_error_count() > 0; });
+            auto rejected = broken.submit(native_alert("retry-me", v1::CRITICAL));
+            verify(!rejected.get(), "unavailable SQLite must not claim durable success");
+            verify(broken.status().storage_error_count() > 0, "failed storage exposes diagnostics");
         }
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

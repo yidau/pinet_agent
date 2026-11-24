@@ -5,6 +5,7 @@
 #include <chrono>
 #include <exception>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <iterator>
 #include <limits>
@@ -326,30 +327,93 @@ void Runtime::sample_wireless() {
 }
 
 void Runtime::sample_alerts(KismetCollector collector) {
+    struct PendingRisk {
+        v1::MonitoringEvent event;
+        std::future<bool> result;
+        std::int64_t first_seen_boot_ms;
+        std::int64_t retry_after_boot_ms;
+        std::size_t bytes;
+    };
+    constexpr std::size_t max_pending_risks = 128;
+    constexpr std::size_t max_pending_bytes = 4 * 1024 * 1024;
+    constexpr std::int64_t max_pending_age_ms = 180000;
+    constexpr std::int64_t retry_delay_ms = 3000;
     std::unordered_map<std::string, std::int64_t> seen;
+    std::unordered_map<std::string, PendingRisk> pending_risks;
+    std::size_t pending_bytes = 0;
     while (!stop_) {
         const auto start = Clock::now();
         const auto now = wall_ms();
-        auto alerts = collector.sample_alerts();
+        const auto now_boot = boottime_ms();
+        std::uint64_t staging_drops = 0;
         for (auto it = seen.begin(); it != seen.end();) {
             if (now - it->second > 300000) it = seen.erase(it);
             else ++it;
         }
+
+        // Only a successful durable commit can mark a high-risk event as seen.
+        // Keep a bounded RAM candidate across REST polling cycles so a transient
+        // SQLite error or an overloaded outbox worker cannot silently lose it.
+        for (auto it = pending_risks.begin(); it != pending_risks.end();) {
+            auto& candidate = it->second;
+            bool committed = false;
+            bool completed = false;
+            if (candidate.result.valid() &&
+                candidate.result.wait_for(0ms) == std::future_status::ready) {
+                committed = candidate.result.get();
+                completed = true;
+            }
+            if (committed || now_boot - candidate.first_seen_boot_ms >= max_pending_age_ms) {
+                if (!committed) ++staging_drops;
+                if (seen.size() < 4096) seen.insert_or_assign(it->first, now);
+                pending_bytes -= candidate.bytes;
+                it = pending_risks.erase(it);
+                continue;
+            }
+            if (completed) candidate.retry_after_boot_ms = now_boot + retry_delay_ms;
+            if (!candidate.result.valid() && now_boot >= candidate.retry_after_boot_ms) {
+                candidate.result = outbox_->submit(candidate.event);
+                candidate.retry_after_boot_ms = now_boot + retry_delay_ms;
+            }
+            ++it;
+        }
+
+        auto alerts = collector.sample_alerts();
         for (auto& event : alerts.events) {
-            if (seen.count(event.event_id()) || seen.size() >= 4096) continue;
-            seen.emplace(event.event_id(), event.timestamp_ms());
-            if (outbox_ && (event.risk_class() == v1::HIGH || event.risk_class() == v1::CRITICAL)) {
-                outbox_->submit(event);
+            const auto id = event.event_id();
+            if (seen.count(id) || pending_risks.count(id)) continue;
+            const bool high_risk = outbox_ && event.event_category() == v1::SECURITY &&
+                (event.risk_class() == v1::HIGH || event.risk_class() == v1::CRITICAL);
+            if (high_risk) {
+                const auto bytes = event.ByteSizeLong();
+                if (bytes > EventStore::max_event_bytes - 64 ||
+                    pending_risks.size() >= max_pending_risks ||
+                    pending_bytes + bytes > max_pending_bytes) {
+                    ++staging_drops;
+                    continue;  // Try again when Kismet still advertises this alert.
+                }
+                PendingRisk candidate{std::move(event), {}, now_boot, now_boot, bytes};
+                candidate.result = outbox_->submit(candidate.event);
+                pending_bytes += bytes;
+                pending_risks.emplace(id, std::move(candidate));
             } else {
+                if (seen.size() >= 4096) continue;
+                seen.emplace(id, event.timestamp_ms());
                 enqueue(std::move(event));
             }
+        }
+        if (staging_drops) {
+            const std::lock_guard<std::mutex> guard(lock_);
+            drops_ += staging_drops;
         }
         {
             const std::lock_guard<std::mutex> guard(lock_);
             alert_health_.set_component_id(v1::ALERT_INPUT);
             alert_health_.set_sampled_at_ms(now);
             alert_health_.set_state(v1::DEGRADED);
-            alert_health_.set_reason(alerts.reachable ? "polling_best_effort" : "alert_input_unavailable");
+            alert_health_.set_reason(alerts.reachable
+                ? (pending_risks.empty() ? "polling_best_effort" : "highrisk_pending_durable_commit")
+                : "alert_input_unavailable");
             if (alerts.reachable) alert_health_.set_last_ok_ms(now);
         }
         wait(start + 3s - Clock::now());
