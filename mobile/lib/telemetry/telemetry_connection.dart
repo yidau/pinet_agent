@@ -149,6 +149,8 @@ class TelemetryConnection extends ChangeNotifier {
   bool get isRequested => _requested;
   int get unreadCount => _messages.where((message) => message.unread).length;
   bool get supportsV2 => (_snapshot?.capabilityVersion ?? 0) >= 2;
+  bool get supportsRadioLab =>
+      _snapshot?.supportedFeatures.contains('radio_lab_v1') ?? false;
   bool get supportsObservationMode =>
       _snapshot?.supportedFeatures.contains('observation_mode') ?? false;
   bool get occupied => _occupied;
@@ -209,6 +211,31 @@ class TelemetryConnection extends ChangeNotifier {
   Future<ControlCommandResponse> setProfile(CaptureProfile value) async {
     _defaultProfilePending = false;
     return _requestProfile(value);
+  }
+
+  Future<RadioLabStatus> controlRadioLab({
+    required String action,
+    String profileId = '',
+    String bssid = '',
+    String sessionId = '',
+    String kind = 'ssid_lab',
+  }) async {
+    final transport = _transport;
+    if (!supportsRadioLab || transport is! _GrpcTransport) {
+      throw StateError('设备不支持主动无线实验');
+    }
+    return transport.service.controlRadioLab(
+      RadioLabRequest(
+        phoneId: transport.target.phoneId,
+        requestId: _requestId(),
+        action: action,
+        profileId: profileId,
+        bssid: bssid,
+        sessionId: sessionId,
+        kind: kind,
+      ),
+      options: transport.unaryOptions,
+    );
   }
 
   Future<ControlCommandResponse> setObservationPaused(bool paused) async {

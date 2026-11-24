@@ -197,7 +197,7 @@ public:
         const v1::ObservedDevice* observed = nullptr;
         v1::ObservedDevicesPage page;
         if (action == "check" || action == "start") {
-            if (request->profile_id().empty() || request->bssid().empty() ||
+            if ((action == "start" && request->profile_id().empty()) || request->bssid().empty() ||
                 (request->kind() != "probe" && request->kind() != "ssid_lab")) {
                 return {grpc::StatusCode::INVALID_ARGUMENT, "Missing lab target or kind"};
             }

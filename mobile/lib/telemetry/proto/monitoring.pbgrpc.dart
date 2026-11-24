@@ -69,6 +69,11 @@ class TelemetryServiceClient extends $grpc.Client {
     return $createUnaryCall(_$setObservationMode, request, options: options);
   }
 
+  $grpc.ResponseFuture<$0.RadioLabStatus> controlRadioLab(
+    $0.RadioLabRequest request, {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$controlRadioLab, request, options: options);
+  }
+
   $grpc.ResponseFuture<$0.ControlCommandResponse> recoverComponent(
     $0.RecoverComponentRequest request, {
     $grpc.CallOptions? options,
@@ -103,6 +108,11 @@ class TelemetryServiceClient extends $grpc.Client {
       '/pocketnet.v1.TelemetryService/SetObservationMode',
       ($0.SetObservationModeRequest value) => value.writeToBuffer(),
       $0.ControlCommandResponse.fromBuffer);
+  static final _$controlRadioLab =
+      $grpc.ClientMethod<$0.RadioLabRequest, $0.RadioLabStatus>(
+          '/pocketnet.v1.TelemetryService/ControlRadioLab',
+          ($0.RadioLabRequest value) => value.writeToBuffer(),
+          $0.RadioLabStatus.fromBuffer);
   static final _$recoverComponent =
       $grpc.ClientMethod<$0.RecoverComponentRequest, $0.ControlCommandResponse>(
           '/pocketnet.v1.TelemetryService/RecoverComponent',
@@ -158,6 +168,10 @@ abstract class TelemetryServiceBase extends $grpc.Service {
         ($core.List<$core.int> value) =>
             $0.SetObservationModeRequest.fromBuffer(value),
         ($0.ControlCommandResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.RadioLabRequest, $0.RadioLabStatus>(
+        'ControlRadioLab', controlRadioLab_Pre, false, false,
+        ($core.List<$core.int> value) => $0.RadioLabRequest.fromBuffer(value),
+        ($0.RadioLabStatus value) => value.writeToBuffer()));
     $addMethod($grpc.ServiceMethod<$0.RecoverComponentRequest,
             $0.ControlCommandResponse>(
         'RecoverComponent',
@@ -211,6 +225,14 @@ abstract class TelemetryServiceBase extends $grpc.Service {
 
   $async.Future<$0.ControlCommandResponse> setObservationMode(
       $grpc.ServiceCall call, $0.SetObservationModeRequest request);
+
+  $async.Future<$0.RadioLabStatus> controlRadioLab_Pre(
+      $grpc.ServiceCall $call, $async.Future<$0.RadioLabRequest> $request) async {
+    return controlRadioLab($call, await $request);
+  }
+
+  $async.Future<$0.RadioLabStatus> controlRadioLab(
+      $grpc.ServiceCall call, $0.RadioLabRequest request);
 
   $async.Future<$0.ControlCommandResponse> recoverComponent_Pre(
       $grpc.ServiceCall $call,

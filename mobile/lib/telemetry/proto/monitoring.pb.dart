@@ -3719,6 +3719,340 @@ class ControlCommandResponse extends $pb.GeneratedMessage {
   void clearReason() => $_clearField(4);
 }
 
+
+class RadioLabRequest extends $pb.GeneratedMessage {
+  factory RadioLabRequest({
+    $core.String? phoneId,
+    $core.String? requestId,
+    $core.String? action,
+    $core.String? profileId,
+    $core.String? bssid,
+    $core.String? sessionId,
+    $core.String? kind,
+  }) {
+    final result = RadioLabRequest._();
+    if (phoneId != null) result.phoneId = phoneId;
+    if (requestId != null) result.requestId = requestId;
+    if (action != null) result.action = action;
+    if (profileId != null) result.profileId = profileId;
+    if (bssid != null) result.bssid = bssid;
+    if (sessionId != null) result.sessionId = sessionId;
+    if (kind != null) result.kind = kind;
+    return result;
+  }
+
+  RadioLabRequest._();
+
+  factory RadioLabRequest.fromBuffer($core.List<$core.int> data,
+      [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      RadioLabRequest()..mergeFromBuffer(data, registry);
+  factory RadioLabRequest.fromJson($core.String json,
+      [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      RadioLabRequest()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'RadioLabRequest',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: RadioLabRequest.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'phoneId')
+    ..aOS(2, _omitFieldNames ? '' : 'requestId')
+    ..aOS(3, _omitFieldNames ? '' : 'action')
+    ..aOS(4, _omitFieldNames ? '' : 'profileId')
+    ..aOS(5, _omitFieldNames ? '' : 'bssid')
+    ..aOS(6, _omitFieldNames ? '' : 'sessionId')
+    ..aOS(7, _omitFieldNames ? '' : 'kind')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  RadioLabRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  RadioLabRequest copyWith(void Function(RadioLabRequest) updates) =>
+      super.copyWith((message) => updates(message as RadioLabRequest)) as RadioLabRequest;
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+  @$core.pragma('dart2js:noInline')
+  static RadioLabRequest create() => RadioLabRequest._();
+  static $pb.GeneratedMessage $_createMessage() => RadioLabRequest._();
+  @$core.override
+  RadioLabRequest createEmptyInstance() => RadioLabRequest._();
+  @$core.pragma('dart2js:noInline')
+  static RadioLabRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<RadioLabRequest>(RadioLabRequest.$_createMessage);
+  static RadioLabRequest? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get phoneId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set phoneId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPhoneId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPhoneId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get requestId => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set requestId($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasRequestId() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearRequestId() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.String get action => $_getSZ(2);
+  @$pb.TagNumber(3)
+  set action($core.String value) => $_setString(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasAction() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearAction() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.String get profileId => $_getSZ(3);
+  @$pb.TagNumber(4)
+  set profileId($core.String value) => $_setString(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasProfileId() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearProfileId() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $core.String get bssid => $_getSZ(4);
+  @$pb.TagNumber(5)
+  set bssid($core.String value) => $_setString(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasBssid() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearBssid() => $_clearField(5);
+
+  @$pb.TagNumber(6)
+  $core.String get sessionId => $_getSZ(5);
+  @$pb.TagNumber(6)
+  set sessionId($core.String value) => $_setString(5, value);
+  @$pb.TagNumber(6)
+  $core.bool hasSessionId() => $_has(5);
+  @$pb.TagNumber(6)
+  void clearSessionId() => $_clearField(6);
+
+  @$pb.TagNumber(7)
+  $core.String get kind => $_getSZ(6);
+  @$pb.TagNumber(7)
+  set kind($core.String value) => $_setString(6, value);
+  @$pb.TagNumber(7)
+  $core.bool hasKind() => $_has(6);
+  @$pb.TagNumber(7)
+  void clearKind() => $_clearField(7);
+}
+
+
+class RadioLabStatus extends $pb.GeneratedMessage {
+  factory RadioLabStatus({
+    $core.bool? accepted,
+    $core.String? phase,
+    $core.String? reason,
+    $core.String? sessionId,
+    $core.String? profileId,
+    $core.String? ssid,
+    $core.String? bssid,
+    $core.String? simulatedBssid,
+    $core.String? channel,
+    $core.String? kind,
+    $fixnum.Int64? startedAtMs,
+    $fixnum.Int64? finishedAtMs,
+    $core.bool? kismetRestored,
+    $core.bool? executorRunning,
+  }) {
+    final result = RadioLabStatus._();
+    if (accepted != null) result.accepted = accepted;
+    if (phase != null) result.phase = phase;
+    if (reason != null) result.reason = reason;
+    if (sessionId != null) result.sessionId = sessionId;
+    if (profileId != null) result.profileId = profileId;
+    if (ssid != null) result.ssid = ssid;
+    if (bssid != null) result.bssid = bssid;
+    if (simulatedBssid != null) result.simulatedBssid = simulatedBssid;
+    if (channel != null) result.channel = channel;
+    if (kind != null) result.kind = kind;
+    if (startedAtMs != null) result.startedAtMs = startedAtMs;
+    if (finishedAtMs != null) result.finishedAtMs = finishedAtMs;
+    if (kismetRestored != null) result.kismetRestored = kismetRestored;
+    if (executorRunning != null) result.executorRunning = executorRunning;
+    return result;
+  }
+
+  RadioLabStatus._();
+
+  factory RadioLabStatus.fromBuffer($core.List<$core.int> data,
+      [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      RadioLabStatus()..mergeFromBuffer(data, registry);
+  factory RadioLabStatus.fromJson($core.String json,
+      [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      RadioLabStatus()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'RadioLabStatus',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: RadioLabStatus.$_createMessage)
+    ..aOB(1, _omitFieldNames ? '' : 'accepted')
+    ..aOS(2, _omitFieldNames ? '' : 'phase')
+    ..aOS(3, _omitFieldNames ? '' : 'reason')
+    ..aOS(4, _omitFieldNames ? '' : 'sessionId')
+    ..aOS(5, _omitFieldNames ? '' : 'profileId')
+    ..aOS(6, _omitFieldNames ? '' : 'ssid')
+    ..aOS(7, _omitFieldNames ? '' : 'bssid')
+    ..aOS(8, _omitFieldNames ? '' : 'simulatedBssid')
+    ..aOS(9, _omitFieldNames ? '' : 'channel')
+    ..aOS(10, _omitFieldNames ? '' : 'kind')
+    ..aInt64(11, _omitFieldNames ? '' : 'startedAtMs')
+    ..aInt64(12, _omitFieldNames ? '' : 'finishedAtMs')
+    ..aOB(13, _omitFieldNames ? '' : 'kismetRestored')
+    ..aOB(14, _omitFieldNames ? '' : 'executorRunning')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  RadioLabStatus clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  RadioLabStatus copyWith(void Function(RadioLabStatus) updates) =>
+      super.copyWith((message) => updates(message as RadioLabStatus)) as RadioLabStatus;
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+  @$core.pragma('dart2js:noInline')
+  static RadioLabStatus create() => RadioLabStatus._();
+  static $pb.GeneratedMessage $_createMessage() => RadioLabStatus._();
+  @$core.override
+  RadioLabStatus createEmptyInstance() => RadioLabStatus._();
+  @$core.pragma('dart2js:noInline')
+  static RadioLabStatus getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<RadioLabStatus>(RadioLabStatus.$_createMessage);
+  static RadioLabStatus? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.bool get accepted => $_getBF(0);
+  @$pb.TagNumber(1)
+  set accepted($core.bool value) => $_setBool(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasAccepted() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearAccepted() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get phase => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set phase($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasPhase() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearPhase() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.String get reason => $_getSZ(2);
+  @$pb.TagNumber(3)
+  set reason($core.String value) => $_setString(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasReason() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearReason() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.String get sessionId => $_getSZ(3);
+  @$pb.TagNumber(4)
+  set sessionId($core.String value) => $_setString(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasSessionId() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearSessionId() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $core.String get profileId => $_getSZ(4);
+  @$pb.TagNumber(5)
+  set profileId($core.String value) => $_setString(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasProfileId() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearProfileId() => $_clearField(5);
+
+  @$pb.TagNumber(6)
+  $core.String get ssid => $_getSZ(5);
+  @$pb.TagNumber(6)
+  set ssid($core.String value) => $_setString(5, value);
+  @$pb.TagNumber(6)
+  $core.bool hasSsid() => $_has(5);
+  @$pb.TagNumber(6)
+  void clearSsid() => $_clearField(6);
+
+  @$pb.TagNumber(7)
+  $core.String get bssid => $_getSZ(6);
+  @$pb.TagNumber(7)
+  set bssid($core.String value) => $_setString(6, value);
+  @$pb.TagNumber(7)
+  $core.bool hasBssid() => $_has(6);
+  @$pb.TagNumber(7)
+  void clearBssid() => $_clearField(7);
+
+  @$pb.TagNumber(8)
+  $core.String get simulatedBssid => $_getSZ(7);
+  @$pb.TagNumber(8)
+  set simulatedBssid($core.String value) => $_setString(7, value);
+  @$pb.TagNumber(8)
+  $core.bool hasSimulatedBssid() => $_has(7);
+  @$pb.TagNumber(8)
+  void clearSimulatedBssid() => $_clearField(8);
+
+  @$pb.TagNumber(9)
+  $core.String get channel => $_getSZ(8);
+  @$pb.TagNumber(9)
+  set channel($core.String value) => $_setString(8, value);
+  @$pb.TagNumber(9)
+  $core.bool hasChannel() => $_has(8);
+  @$pb.TagNumber(9)
+  void clearChannel() => $_clearField(9);
+
+  @$pb.TagNumber(10)
+  $core.String get kind => $_getSZ(9);
+  @$pb.TagNumber(10)
+  set kind($core.String value) => $_setString(9, value);
+  @$pb.TagNumber(10)
+  $core.bool hasKind() => $_has(9);
+  @$pb.TagNumber(10)
+  void clearKind() => $_clearField(10);
+
+  @$pb.TagNumber(11)
+  $fixnum.Int64 get startedAtMs => $_getI64(10);
+  @$pb.TagNumber(11)
+  set startedAtMs($fixnum.Int64 value) => $_setInt64(10, value);
+  @$pb.TagNumber(11)
+  $core.bool hasStartedAtMs() => $_has(10);
+  @$pb.TagNumber(11)
+  void clearStartedAtMs() => $_clearField(11);
+
+  @$pb.TagNumber(12)
+  $fixnum.Int64 get finishedAtMs => $_getI64(11);
+  @$pb.TagNumber(12)
+  set finishedAtMs($fixnum.Int64 value) => $_setInt64(11, value);
+  @$pb.TagNumber(12)
+  $core.bool hasFinishedAtMs() => $_has(11);
+  @$pb.TagNumber(12)
+  void clearFinishedAtMs() => $_clearField(12);
+
+  @$pb.TagNumber(13)
+  $core.bool get kismetRestored => $_getBF(12);
+  @$pb.TagNumber(13)
+  set kismetRestored($core.bool value) => $_setBool(12, value);
+  @$pb.TagNumber(13)
+  $core.bool hasKismetRestored() => $_has(12);
+  @$pb.TagNumber(13)
+  void clearKismetRestored() => $_clearField(13);
+
+  @$pb.TagNumber(14)
+  $core.bool get executorRunning => $_getBF(13);
+  @$pb.TagNumber(14)
+  set executorRunning($core.bool value) => $_setBool(13, value);
+  @$pb.TagNumber(14)
+  $core.bool hasExecutorRunning() => $_has(13);
+  @$pb.TagNumber(14)
+  void clearExecutorRunning() => $_clearField(14);
+}
+
 const $core.bool _omitFieldNames =
     $core.bool.fromEnvironment('protobuf.omit_field_names');
 const $core.bool _omitMessageNames =

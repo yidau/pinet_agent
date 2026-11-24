@@ -48,7 +48,7 @@ def read_json(path):
 
 def profile_for(profile_id, bssid, ssid, channel):
     """All target values are matched against a root-provisioned lab profile."""
-    if not SAFE_PROFILE.fullmatch(profile_id):
+    if profile_id and not SAFE_PROFILE.fullmatch(profile_id):
         return None
     root = read_json(PROFILES)
     if root.get("schema") != 1:
@@ -57,7 +57,7 @@ def profile_for(profile_id, bssid, ssid, channel):
     if not isinstance(entries, list) or len(entries) > 8:
         return None
     for p in entries:
-        if not isinstance(p, dict) or p.get("id") != profile_id:
+        if not isinstance(p, dict) or (profile_id and p.get("id") != profile_id):
             continue
         if p.get("rf_isolated") is not True or p.get("enabled") is not True:
             return None
