@@ -8,6 +8,7 @@ import 'enrollment/enrollment_profile.dart';
 import 'enrollment/enrollment_screen.dart';
 import 'telemetry/dashboard_page.dart';
 import 'telemetry/message_page.dart';
+import 'telemetry/monitoring_widgets.dart';
 import 'telemetry/normal_monitor_page.dart';
 import 'telemetry/telemetry_connection.dart';
 import 'time_sync/time_sync_screen.dart';
@@ -156,6 +157,18 @@ class _PocketNetHomeState extends State<PocketNetHome>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final (connectionLabel, connectionStatus) = switch (_telemetry.phase) {
+      TelemetryPhase.live when !_telemetry.stale => (
+        '已连接',
+        MonitorStatus.normal,
+      ),
+      TelemetryPhase.live => ('数据过期', MonitorStatus.limited),
+      TelemetryPhase.connecting => ('连接中', MonitorStatus.limited),
+      TelemetryPhase.retrying => ('重连中', MonitorStatus.limited),
+      TelemetryPhase.denied => ('未授权', MonitorStatus.failed),
+      TelemetryPhase.incompatible => ('版本不兼容', MonitorStatus.failed),
+      TelemetryPhase.stopped => ('未连接', MonitorStatus.unknown),
+    };
     final tabs = [
       DashboardPage(connection: _telemetry, onOpenMessages: _openMessages),
       NormalMonitorPage(connection: _telemetry, active: _tab == 1),
@@ -169,10 +182,48 @@ class _PocketNetHomeState extends State<PocketNetHome>
           children: [
             Icon(Symbols.radar, color: theme.colorScheme.primary),
             const SizedBox(width: 9),
-            const Text('PocketNet'),
+            const Flexible(
+              child: Text('PocketNet', overflow: TextOverflow.ellipsis),
+            ),
           ],
         ),
         actions: [
+          if (_profile case final profile?)
+            TextButton(
+              onPressed: () => showMonitoringSheet(
+                context,
+                (_) => MonitoringSheetBody(
+                  '设备连接',
+                  children: [
+                    ListTile(
+                      title: const Text('设备'),
+                      subtitle: Text(profile.piId),
+                    ),
+                    ListTile(
+                      leading: connectionStatus.indicator(context),
+                      title: Text(connectionLabel),
+                    ),
+                  ],
+                ),
+              ),
+              style: TextButton.styleFrom(
+                foregroundColor: connectionStatus.color(context),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  connectionStatus.indicator(context, size: 13),
+                  const SizedBox(width: 4),
+                  Text(
+                    connectionLabel,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: connectionStatus.color(context),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           PopupMenuButton<String>(
             tooltip: '设备设置',
             onSelected: (value) {
@@ -254,29 +305,6 @@ class _PocketNetHomeState extends State<PocketNetHome>
                 padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                 child: Text('无法读取手机注册信息，可以重新扫码注册。'),
               ),
-            if (_profile != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.devices,
-                      size: 17,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text('设备 · ${_profile!.piId}')),
-                    Text(switch (_telemetry.phase) {
-                      TelemetryPhase.live => '实时连接',
-                      TelemetryPhase.connecting => '连接中',
-                      TelemetryPhase.retrying => '重连中',
-                      TelemetryPhase.denied => '未授权',
-                      TelemetryPhase.incompatible => '版本不兼容',
-                      TelemetryPhase.stopped => '未连接',
-                    }, style: theme.textTheme.labelMedium),
-                  ],
-                ),
-              ),
             Expanded(
               child: IndexedStack(
                 index: _tab,
@@ -290,6 +318,7 @@ class _PocketNetHomeState extends State<PocketNetHome>
         ),
       ),
       bottomNavigationBar: NavigationBar(
+        height: 64,
         selectedIndex: _tab,
         onDestinationSelected: (index) => setState(() => _tab = index),
         destinations: [

@@ -12,6 +12,7 @@ import 'package:piagent/main.dart';
 import 'package:piagent/telemetry/dashboard_page.dart';
 import 'package:piagent/telemetry/message_page.dart';
 import 'package:piagent/telemetry/message_repository.dart';
+import 'package:piagent/telemetry/normal_monitor_page.dart';
 import 'package:piagent/telemetry/proto/monitoring.pbgrpc.dart';
 import 'package:piagent/telemetry/telemetry_connection.dart';
 import 'package:piagent/ui/console_style.dart';
@@ -285,6 +286,16 @@ void main() {
               timestampMs: now,
               system: SystemMetrics(cpuUsage: 22, sampledAtMs: now),
               capture: CaptureMetrics(datasourceState: 'degraded'),
+              deviceHealth: DeviceHealth(
+                components: [
+                  ComponentHealth(
+                    componentId: ComponentId.ALERT_INPUT,
+                    state: ComponentState.DEGRADED,
+                    reason: 'polling_best_effort',
+                    lastOkMs: now,
+                  ),
+                ],
+              ),
             ),
           ),
         )
@@ -301,11 +312,124 @@ void main() {
     expect(find.text('设备在线，监听受限'), findsOneWidget);
     expect(find.text('22.0%'), findsOneWidget);
     expect(find.text('未报告'), findsWidgets);
+    expect(find.text('重点接入点'), findsNothing);
+    expect(find.textContaining('约每 3 秒'), findsNothing);
+    await tester.tap(find.text('告警接入'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('约每 3 秒'), findsOneWidget);
+    expect(find.text('上次正常'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
     await tester.pumpWidget(app(MessagePage(connection: feed)));
     expect(find.text('1 条未读'), findsOneWidget);
     expect(find.text('无线采集受限'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('monitoring starts with active APs and opens all APs in place', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final transport = _MemoryTransport();
+    final now = Int64(1750000000000);
+    ObservedDevice ap(String name, String mac, int bytes) => ObservedDevice(
+      kind: ObservedDeviceKind.AP,
+      ssid: name,
+      bssid: mac,
+      rssiDbm: -47,
+      lastSeenMs: now,
+      traffic: ObservedTraffic(
+        status: TrafficStatus.TRAFFIC_OBSERVED,
+        windowMs: 30000,
+        observedBytes: Int64(bytes),
+      ),
+    );
+    final feed = _ObservationFeed(
+      repository: _repository(),
+      createTransport: (_) => transport,
+      page: (token) => ObservedDevicesPage(
+        sampledAtMs: now,
+        generation: Int64(1),
+        totalCount: 2,
+        nextPageToken: token == null ? 'second' : null,
+        devices: token == null
+            ? [ap('Active-WiFi', '20:00:00:00:00:01', 1536)]
+            : [ap('Quiet-WiFi', '20:00:00:00:00:02', 0)],
+      ),
+    );
+    addTearDown(feed.dispose);
+    await tester.runAsync(() async {
+      feed.useTarget(
+        const TelemetryTarget(
+          host: 'localhost',
+          deviceKey: 'fixture-device',
+          phoneId: 'fixture-phone',
+          token: 'fixture-token',
+          caPem: 'unused',
+        ),
+      );
+      await _until(() => transport.subscribed);
+      transport.frames.add(
+        TelemetryMessage(
+          snapshot: MonitoringSnapshot(
+            bootId: 'boot-a',
+            sequence: Int64(1),
+            timestampMs: now,
+            schemaVersion: 1,
+            capabilityVersion: 2,
+            wireless: WirelessSummary(
+              sampledAtMs: now,
+              coverage: 'live_source_window',
+            ),
+            capturePolicy: CapturePolicyStatus(actual: 'balanced'),
+          ),
+        ),
+      );
+      await _until(() => feed.phase == TelemetryPhase.live);
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: consoleTheme(Brightness.dark),
+        home: Scaffold(body: NormalMonitorPage(connection: feed, active: true)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('重点接入点'), findsOneWidget);
+    expect(find.text('Quiet-WiFi'), findsNothing);
+    expect(find.text('轻量'), findsNothing);
+    expect(feed.requests, [null, 'second']);
+    await tester.tap(find.text('查看所有'));
+    await tester.pumpAndSettle();
+    expect(find.text('所有接入点'), findsOneWidget);
+    expect(find.text('Quiet-WiFi'), findsOneWidget);
+    expect(find.text('加载下一页'), findsNothing);
+    await tester.tap(find.text('20:00:00:00:00:02'));
+    await tester.pumpAndSettle();
+    expect(find.text('接入点详情'), findsOneWidget);
+    expect(find.text('30 秒观测 · 0 B'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class _ObservationFeed extends TelemetryConnection {
+  _ObservationFeed({
+    required super.repository,
+    required super.createTransport,
+    required this.page,
+  });
+  final ObservedDevicesPage Function(String?) page;
+  final requests = <String?>[];
+
+  @override
+  Future<ObservedDevicesPage> observedDevices({
+    String? token,
+    String? ssid,
+    String? bssid,
+  }) async {
+    requests.add(token);
+    return page(token);
+  }
 }
 
 MessageRepository _repository({int limit = 500}) {
