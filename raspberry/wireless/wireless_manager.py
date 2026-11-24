@@ -173,7 +173,11 @@ class MonitorManager:
         self.net = net
         self.clock = clock
         self.last_attempt = float("-inf")
+        self.attempt_radio = None
+        # The last confirmed/opened kernel device, not just its stable USB identity.
+        # ifindex and PHY change when a radio is removed between inventory polls.
         self.last_radio = None
+        self.needs_reopen = False
 
     def owned_source(self, sources):
         matching = [row for row in sources if isinstance(row.get(FIELD + "uuid"), str)
@@ -187,6 +191,19 @@ class MonitorManager:
         if row and row.get(FIELD + "running") in (True, 1):
             self.api.close_source(self.config.datasource_uuid)
 
+    def retry_due(self, radio):
+        return self.attempt_radio != radio or self.clock() - self.last_attempt >= RETRY_SECONDS
+
+    def record_attempt(self, radio):
+        self.last_attempt, self.attempt_radio = self.clock(), radio
+
+    @staticmethod
+    def source_conflict(sources, row):
+        return any(other is not row and other.get(FIELD + "running") in (True, 1)
+                   and (other.get(FIELD + "interface") in (MONITOR_INTERFACE, MONITOR_VIF)
+                        or other.get(FIELD + "capture_interface") in (MONITOR_INTERFACE, MONITOR_VIF))
+                   for other in sources)
+
     def check(self):
         """Return a compact status and avoid changing any datasource not assigned by this manager."""
         try:
@@ -199,48 +216,83 @@ class MonitorManager:
     def _check(self):
         try:
             radio = self.detect(self.config)
-        except Unavailable:
+        except Unavailable as exc:
             self.last_radio = None
-            try:
-                self.close()
-            except KismetError:
-                # Preserve the physical reason if the Kismet instance is also unavailable.
-                pass
+            self.needs_reopen = True
+            # A missing assigned USB radio may be stopped. Other identity failures
+            # cannot prove that changing the interface would leave the hotspot safe.
+            if str(exc) == "usb_monitor_missing" and self.retry_due(None):
+                self.record_attempt(None)
+                try:
+                    self.close()
+                except (KismetError, Unavailable):
+                    # Preserve the physical reason; ownership checks still apply.
+                    pass
             raise
 
         sources = self.api.list_sources()
         row = self.owned_source(sources)
-        if any(other is not row and other.get(FIELD + "running") in (True, 1)
-               and (other.get(FIELD + "interface") in (MONITOR_INTERFACE, MONITOR_VIF)
-                    or other.get(FIELD + "capture_interface") in (MONITOR_INTERFACE, MONITOR_VIF))
-               for other in sources):
-            if row and row.get(FIELD + "running") in (True, 1):
+        if self.source_conflict(sources, row):
+            self.needs_reopen = True
+            if row and row.get(FIELD + "running") in (True, 1) and self.retry_due(radio):
+                if self.detect(self.config) != radio:
+                    raise Unavailable("monitor_identity_changed")
+                self.record_attempt(radio)
                 self.api.close_source(self.config.datasource_uuid)
             raise Unavailable("monitor_source_conflict")
+        if self.last_radio is not None and self.last_radio != radio:
+            self.needs_reopen = True
         if row and row.get(FIELD + "running") in (True, 1):
             capture_name = row.get(FIELD + "capture_interface")
+            if capture_name not in (None, "", MONITOR_INTERFACE, MONITOR_VIF):
+                raise Unavailable("monitor_capture_identity_mismatch")
             identity_ok = False
             if capture_name in (MONITOR_INTERFACE, MONITOR_VIF):
                 try:
                     identity_ok = (self.net / capture_name / "phy80211").resolve(strict=True) == radio.phy
                 except (OSError, RuntimeError):
                     pass
-            if not identity_ok:
-                self.api.close_source(self.config.datasource_uuid)
-                raise Unavailable("monitor_capture_identity_mismatch")
-            if row.get(FIELD + "paused") in (False, 0) and row.get(FIELD + "error") in (False, 0):
-                return "ready", "", self.config.datasource_uuid
+            if not identity_ok or row.get(FIELD + "error") in (True, 1):
+                self.needs_reopen = True
+            if not self.needs_reopen:
+                if row.get(FIELD + "error") in (False, 0):
+                    if row.get(FIELD + "paused") in (False, 0):
+                        self.last_radio = radio
+                        return "ready", "", self.config.datasource_uuid
+                    if row.get(FIELD + "paused") in (True, 1):
+                        # An explicit pause alone is not a USB failure.
+                        self.last_radio = radio
+                        return "degraded", "monitor_source_paused", None
+                return "degraded", "monitor_source_unhealthy", None
+        elif row and row.get(FIELD + "running") not in (False, 0):
             return "degraded", "monitor_source_unhealthy", None
 
-        if self.last_radio == radio and self.clock() - self.last_attempt < RETRY_SECONDS:
+        if not self.retry_due(radio):
             return "degraded", "monitor_waiting_for_source", None
         if self.detect(self.config) != radio:
             raise Unavailable("monitor_identity_changed")
-        self.last_attempt, self.last_radio = self.clock(), radio
+        self.record_attempt(radio)
+        # Retain this marker across failed/uncertain API calls, even if a later
+        # response advertises the stale source as running and error-free.
+        self.needs_reopen = True
+        if row and row.get(FIELD + "running") in (True, 1):
+            self.api.close_source(self.config.datasource_uuid)
+            # Kismet open_source rejects a running source. Closing preserves its
+            # UUID/definition; observe the stopped state before opening it again.
+            sources = self.api.list_sources()
+            row = self.owned_source(sources)
+            if self.source_conflict(sources, row):
+                raise Unavailable("monitor_source_conflict")
+            if row and row.get(FIELD + "running") not in (False, 0):
+                return "starting", "monitor_waiting_for_stop", None
+        if self.detect(self.config) != radio:
+            raise Unavailable("monitor_identity_changed")
         if row:
             self.api.open_source(self.config.datasource_uuid)
         else:
             self.api.add(self.config.datasource_uuid)
+        self.last_radio = radio
+        self.needs_reopen = False
         return "starting", "monitor_waiting_for_source", None
 
 

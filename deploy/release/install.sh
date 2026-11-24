@@ -148,6 +148,8 @@ def changed_units(before, after):
         units.append("piagent-enrollment-wifi.service")
     if "raspberry/config/kismet/configure.py" in changes:
         units.append("piagent-kismet-provision.service")
+    if "raspberry/config/runtime/prepare-hotspot.py" in changes:
+        units.append("piagent-hotspot.service")
     if "raspberry/config/kismet/configure_monitor.py" in changes or any(
         file.startswith("raspberry/wireless/") for file in changes
     ):
@@ -202,6 +204,14 @@ def managed_configuration(root, release):
         "etc/systemd/system/swapfile.swap": "/dev/null",
         "etc/systemd/system/dphys-swapfile.service": "/dev/null",
     }
+    # New releases carry the management hotspot units as well as telemetry.
+    # Keep the enablement links in the same rollback transaction as the units;
+    # older release archives without these assets remain installable.
+    for unit in ("piagent-hotspot.service", "piagent-dhcp.service"):
+        asset = assets / unit
+        if asset.is_file():
+            settings[f"etc/systemd/system/{unit}"] = asset.read_bytes()
+            settings[f"etc/systemd/system/multi-user.target.wants/{unit}"] = f"../{unit}"
     kismet = "etc/kismet/piagent.conf"
     template = (release / "raspberry/config/kismet/piagent.conf").read_bytes()
     if (root / kismet).is_file():
@@ -281,6 +291,9 @@ def configuration_units(paths):
             units.append("piagent-ble-time-sync.service")
         if path.endswith("etc/default/zramswap"):
             units.append("zramswap.service")
+        for unit in ("piagent-hotspot.service", "piagent-dhcp.service"):
+            if path.endswith("/" + unit):
+                units.append(unit)
     return units
 
 
@@ -338,6 +351,13 @@ def install(root, live, archive, expected_sha):
             changes = {path: value for path, value in config.items() if prior_config[path][0] != value}
             units = [unit for unit in dict.fromkeys(configuration_units(changes) +
                      changed_units(before, manifest["files"])) if live and active(unit)]
+            # Restarting the hotspot also affects its DHCP and telemetry
+            # consumers. Include previously active consumers explicitly so an
+            # SSH update cannot leave them stopped after the hotspot recovers.
+            if "piagent-hotspot.service" in units:
+                for unit in ("piagent-dhcp.service", "piagent-telemetry.service"):
+                    if unit not in units and active(unit):
+                        units.append(unit)
             applied = []
             try:
                 for path, value in changes.items():

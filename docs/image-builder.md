@@ -28,7 +28,7 @@
 
     scp -o BindAddress=192.168.77.1 <更新包> yidau@192.168.77.2:~/
 
-首次升级到 RAM-first 版本时，将当前源码里的 `deploy/release/install.sh` 一同通过 SCP 上传到家目录，并用它安装更新包。填入更新包在 SHA256SUMS 中的哈希。
+首次升级到 RAM-first 版本或本次热点独立启动修复版时，将当前源码里的 `deploy/release/install.sh` 一同通过 SCP 上传到家目录，并用它安装更新包。旧安装器尚不识别新增的热点单元及开机启用链接。填入更新包在 SHA256SUMS 中的哈希。
 
     sudo bash ~/install.sh --sha256 <SHA-256> ~/<更新包>
 
@@ -37,6 +37,23 @@
     sudo /opt/pocketnet/deploy/install-release.sh --sha256 <SHA-256> ~/<更新包>
 
 更新器保留设备身份、手机注册、TLS 和 Kismet 凭据。升级失败时回退软件链接和修改过的系统配置。树莓派事件缓冲在 RAM，历史以手机 SQLite 为准。已有版本留下的事件文件保留供回退，RAM-first 服务不再打开它们。完整镜像适用于新卡或重新初始化。
+
+### 热点启动与 USB 恢复修复
+
+热点和 DHCP 现在由镜像及更新包直接配置为开机启动，不再等待完整的首次初始化成功后才启用。首次初始化也先启动热点，再生成 TLS、设备身份并初始化 BLE/Kismet。热点的准备程序只在首次缺少凭据文件时建立私有的空 PSK 文件；已有手机的 PSK、二维码和注册数据不重写。未注册手机仍不能连接这个 WPA2 热点。
+
+已有设备通过上面的 SSH 更新路径应用两个热点单元及无线管理器代码。更新会短暂重启此前正在运行的热点及相关消费者，因此使用独立的有线 SSH 链路。原本未运行的热点会在下次开机自动启动；也可由设备所有者执行 `sudo systemctl start piagent-hotspot.service piagent-dhcp.service`。不需要因这些 Python/systemd 改动重装手机，协议和手机源码均未改变，可沿用当前源码对应的 `1.1.0+14` APK。
+
+本次改动移除了可由代码确认的启动耦合，不代表已经测得实机开机耗时。若完成首次初始化后的普通开机仍需几分钟才出现 SSID，由设备所有者提供以下只读结果，保留单调时间戳以定位实际等待：
+
+```bash
+systemd-analyze critical-chain piagent-hotspot.service
+journalctl -b -u piagent-hotspot.service -u pocketnet-firstboot.service -o short-monotonic --no-pager -n 80
+```
+
+网卡拔插恢复说明与必要检查见 `docs/v1.0-wireless-manager.md`。软件离线验证不能替代树莓派启动、实际网卡收包和手机通信验收。
+
+本轮源码修补的离线记录：Debian 13 x86_64、Python 3.12 环境执行 `python -m unittest discover -s tests -v`，43 项通过；23 个 Python 文件语法、11 个 shell 脚本语法和 `git diff --check` 通过。测试包含注册额度、热点凭据保持、身份初始化失败后的启动顺序、配置回滚及 USB 恢复夹具。这不是 Ubuntu 22.04 WSL/ARM64 交付验收；本环境没有匹配的 ARM64 chroot，尚未生成本修复的 ARM64 更新包，也未重新构建镜像或 APK。
 
 镜像和 SSH 升级都安装 32 MiB 的 volatile journald 配置和 64 MiB 的 `/tmp` tmpfs 单元。就地升级后，`/tmp` 在下一次启动时切换。Ubuntu 的 `/run` 与 `/dev/shm` 作为 RAM 运行目录，本次不迁移 `/var/lib` 或添加 swap。真实 SD 卡写入量、网卡和手机通信由实机验收确认。
 

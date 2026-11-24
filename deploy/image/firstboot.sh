@@ -9,12 +9,24 @@ tls=/etc/piagent-https
 registry=/var/lib/piagent-devices
 qr=/root/piagent-enrollment.svg
 
-install -d -m 0700 "$state" /var/lib/piagent-enrollment
+install -d -m 0700 "$state"
 exec 9>/run/lock/pocketnet-firstboot.lock
 flock -n 9
 [[ ! -e "$state/firstboot-complete" ]] || exit 0
 cd "$app"
 export PYTHONDONTWRITEBYTECODE=1
+
+# Make management access available before identity, Bluetooth or Kismet setup.
+# The hotspot unit creates an empty PSK file only on a new device and preserves
+# all registered-phone keys on subsequent starts.
+systemctl start piagent-hotspot.service piagent-dhcp.service
+for ((attempt = 0; attempt < 12; attempt++)); do
+    if [[ "$(hostapd_cli -i wlan0 ping 2>/dev/null)" == PONG ]]; then
+        break
+    fi
+    sleep 1
+done
+[[ "$(hostapd_cli -i wlan0 ping 2>/dev/null)" == PONG ]]
 
 read -r build_epoch < /etc/pocketnet/build-epoch
 [[ "$build_epoch" =~ ^[0-9]{10}$ ]]
@@ -117,17 +129,6 @@ if [[ -e "$pending/ready" ]]; then
     rm -f -- "$pending/qr.svg" "$pending/ready"
     rmdir -- "$pending"
 fi
-[[ -e /var/lib/piagent-enrollment/hostapd.psk ]] || install -m 0600 /dev/null /var/lib/piagent-enrollment/hostapd.psk
-
-systemctl start piagent-hotspot.service piagent-dhcp.service
-for ((attempt = 0; attempt < 12; attempt++)); do
-    if [[ "$(hostapd_cli -i wlan0 ping 2>/dev/null)" == PONG ]]; then
-        break
-    fi
-    sleep 1
-done
-[[ "$(hostapd_cli -i wlan0 ping 2>/dev/null)" == PONG ]]
-
 systemctl start bluetooth.service
 rfkill unblock bluetooth
 for ((attempt = 0; attempt < 12; attempt++)); do

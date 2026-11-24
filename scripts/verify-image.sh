@@ -90,6 +90,10 @@ systemctl --root="$root" is-enabled zramswap.service
 for unit in pocketnet-firstboot piagent-telemetry piagent-kismet piagent-kismet-provision piagent-wireless-manager piagent-ble-time-sync; do
     [[ -f "$root/etc/systemd/system/$unit.service" ]]
 done
+test -f "$root$app/raspberry/config/runtime/prepare-hotspot.py"
+grep -qx 'ExecStartPre=/usr/bin/python3 -I -B /opt/pocketnet/current/raspberry/config/runtime/prepare-hotspot.py' \
+    "$unit_dir/piagent-hotspot.service"
+systemctl --root="$root" is-enabled piagent-hotspot.service piagent-dhcp.service
 if [[ "$ENABLE_FIRST_BOOT" == true ]]; then
     systemctl --root="$root" is-enabled pocketnet-firstboot.service
 fi

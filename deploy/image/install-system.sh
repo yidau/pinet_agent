@@ -67,4 +67,6 @@ systemctl --root="$root" enable zramswap.service
 if [[ -e "$root/lib/systemd/system/kismet.service" || -e "$root/usr/lib/systemd/system/kismet.service" ]]; then
     systemctl --root="$root" mask kismet.service
 fi
+# Management access must start even if firstboot later fails in BLE or Kismet.
+systemctl --root="$root" enable piagent-hotspot.service piagent-dhcp.service
 systemctl --root="$root" enable pocketnet-firstboot.service
