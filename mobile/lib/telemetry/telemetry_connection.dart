@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
 
 import 'package:fixnum/fixnum.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:grpc/grpc.dart';
 
 import '../enrollment/enrollment_profile.dart';
@@ -73,6 +76,11 @@ class _GrpcTransport implements TelemetryTransport {
 
   final TelemetryTarget target;
   final ClientChannel _channel;
+  TelemetryServiceClient get service => TelemetryServiceClient(_channel);
+  CallOptions get unaryOptions => CallOptions(
+    timeout: const Duration(seconds: 6),
+    metadata: {'authorization': 'Bearer ${target.token}'},
+  );
 
   @override
   Stream<TelemetryMessage> subscribe(SubscribeRequest request) =>
@@ -92,7 +100,20 @@ class TelemetryConnection extends ChangeNotifier {
     MessageRepository? repository,
     TelemetryTransport Function(TelemetryTarget)? createTransport,
   }) : _repository = repository ?? MessageRepository(),
-       _createTransport = createTransport ?? _GrpcTransport.new;
+       _createTransport = createTransport ?? _GrpcTransport.new {
+    if (Platform.isAndroid) {
+      _background.setMethodCallHandler((call) async {
+        if (call.method == 'stopped' && !_disposed) {
+          _backgroundEnabled = false;
+          if (!_foreground) {
+            _endTransport();
+            _phase = TelemetryPhase.stopped;
+          }
+          notifyListeners();
+        }
+      });
+    }
+  }
 
   final MessageRepository _repository;
   final TelemetryTransport Function(TelemetryTarget) _createTransport;
@@ -110,6 +131,13 @@ class TelemetryConnection extends ChangeNotifier {
   List<StoredTelemetryEvent> _messages = const [];
   TelemetryPhase _phase = TelemetryPhase.stopped;
   bool _storageError = false;
+  bool _occupied = false;
+  bool _backgroundEnabled = false;
+  final _clock = Stopwatch()..start();
+  int? _snapshotReceivedMs;
+  Timer? _freshness;
+  static const _background = MethodChannel('net.piagent.piagent/monitoring');
+  final snapshotRevision = ValueNotifier<int>(0);
 
   MonitoringSnapshot? get snapshot => _snapshot;
   List<StoredTelemetryEvent> get messages => _messages;
@@ -118,6 +146,117 @@ class TelemetryConnection extends ChangeNotifier {
   bool get isConfigured => _target != null;
   bool get isRequested => _requested;
   int get unreadCount => _messages.where((message) => message.unread).length;
+  bool get supportsV2 => (_snapshot?.capabilityVersion ?? 0) >= 2;
+  bool get occupied => _occupied;
+  bool get backgroundEnabled => _backgroundEnabled;
+  Duration? get snapshotAge => _snapshotReceivedMs == null
+      ? null
+      : Duration(
+          milliseconds: _clock.elapsedMilliseconds - _snapshotReceivedMs!,
+        );
+  bool get stale =>
+      snapshotAge == null || snapshotAge! >= const Duration(seconds: 7);
+
+  Future<bool> setBackgroundReception(bool enable) async {
+    if (!Platform.isAndroid || (enable && !_requested)) return false;
+    try {
+      final enabled =
+          await _background.invokeMethod<bool>(enable ? 'start' : 'stop') ??
+          false;
+      if (_disposed) return false;
+      _backgroundEnabled = enable && enabled;
+      notifyListeners();
+      return enable ? _backgroundEnabled : !_backgroundEnabled;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<ObservedDevicesPage> observedDevices({
+    String? token,
+    String? ssid,
+    String? bssid,
+  }) async {
+    final transport = _transport;
+    if (!supportsV2 || transport is! _GrpcTransport) {
+      throw StateError('设备当前无法读取观测列表');
+    }
+    return transport.service.getObservedDevices(
+      ObservedDevicesRequest(
+        phoneId: transport.target.phoneId,
+        pageToken: token,
+        pageSize: 32,
+        ssidFilter: ssid,
+        bssidFilter: bssid,
+      ),
+      options: transport.unaryOptions,
+    );
+  }
+
+  static String _requestId() {
+    final random = Random.secure();
+    return List.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
+  }
+
+  Future<ControlCommandResponse> setProfile(CaptureProfile value) async {
+    final transport = _transport;
+    if (!supportsV2 || transport is! _GrpcTransport) {
+      throw StateError('设备尚未提供采集档位');
+    }
+    return transport.service.setCaptureProfile(
+      SetCaptureProfileRequest(
+        phoneId: transport.target.phoneId,
+        requestId: _requestId(),
+        targetProfile: value,
+      ),
+      options: transport.unaryOptions,
+    );
+  }
+
+  Future<ControlCommandResponse> recover(
+    ComponentId component, {
+    bool allowHotspotRestart = false,
+  }) async {
+    final transport = _transport;
+    if (!supportsV2 || transport is! _GrpcTransport) {
+      throw StateError('设备尚未提供组件恢复');
+    }
+    return transport.service.recoverComponent(
+      RecoverComponentRequest(
+        phoneId: transport.target.phoneId,
+        requestId: _requestId(),
+        component: component,
+        allowHotspotRestart: allowHotspotRestart,
+      ),
+      options: transport.unaryOptions,
+    );
+  }
+
+  Future<List<HighRiskRecord>> highRiskPage(int offset) async {
+    final target = _target;
+    return target == null
+        ? const []
+        : _repository.highRiskPage(target.deviceKey, offset);
+  }
+
+  Future<void> updateHighRisk(
+    String id, {
+    String? status,
+    bool delete = false,
+  }) async {
+    final target = _target;
+    if (target != null) {
+      await _repository.updateHighRisk(
+        target.deviceKey,
+        id,
+        status: status,
+        delete: delete,
+      );
+    }
+  }
 
   void useTarget(TelemetryTarget? target) {
     final previous = _target;
@@ -131,6 +270,7 @@ class TelemetryConnection extends ChangeNotifier {
     _requested = target != null;
     _cursor = null;
     _snapshot = null;
+    _snapshotReceivedMs = null;
     _messages = const [];
     _storageError = false;
     _phase = TelemetryPhase.stopped;
@@ -145,11 +285,20 @@ class TelemetryConnection extends ChangeNotifier {
     if (_target == null) return;
     if (_requested) return;
     _requested = true;
-    if (_foreground) _connect();
+    _occupied = false;
+    if (_foreground || _backgroundEnabled) _connect();
+  }
+
+  void reconnect() {
+    if (_target == null) return;
+    _requested = true;
+    _occupied = false;
+    _connect();
   }
 
   void stop() {
     _requested = false;
+    if (_backgroundEnabled) unawaited(setBackgroundReception(false));
     _endTransport();
     _phase = TelemetryPhase.stopped;
     notifyListeners();
@@ -158,11 +307,11 @@ class TelemetryConnection extends ChangeNotifier {
   void setForeground(bool foreground) {
     if (foreground == _foreground) return;
     _foreground = foreground;
-    if (!foreground) {
+    if (!foreground && !_backgroundEnabled) {
       _endTransport();
       _phase = TelemetryPhase.stopped;
       notifyListeners();
-    } else if (_requested) {
+    } else if (foreground && _requested && _stream == null && _retry == null) {
       _connect();
     }
   }
@@ -203,6 +352,7 @@ class TelemetryConnection extends ChangeNotifier {
         deviceId: target.phoneId,
         lastBootId: _cursor?.bootId,
         lastEventSequence: _cursor?.sequence,
+        acceptsHighRisk: transport is _GrpcTransport,
       );
       _stream = transport
           .subscribe(request)
@@ -214,6 +364,15 @@ class TelemetryConnection extends ChangeNotifier {
             onError: (Object error) => _streamEnded(generation, error),
             cancelOnError: true,
           );
+      _freshness = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!_isCurrent(generation) || _phase != TelemetryPhase.live) return;
+        if (snapshotAge != null &&
+            snapshotAge! >= const Duration(seconds: 12)) {
+          _streamEnded(generation);
+        } else {
+          notifyListeners();
+        }
+      });
     } catch (error) {
       _streamEnded(generation, error);
     }
@@ -237,6 +396,8 @@ class TelemetryConnection extends ChangeNotifier {
             previous.bootId != snapshot.bootId ||
             previous.sequence < snapshot.sequence) {
           _snapshot = snapshot;
+          _snapshotReceivedMs = _clock.elapsedMilliseconds;
+          snapshotRevision.value++;
         }
         _phase = TelemetryPhase.live;
         _backoffSeconds = 1;
@@ -275,9 +436,69 @@ class TelemetryConnection extends ChangeNotifier {
           bootId: gap.bootId,
           sequence: sequence,
         ));
+      case TelemetryMessage_Payload.highRisk:
+        await _saveAndAck(message.highRisk, target, generation);
       case TelemetryMessage_Payload.notSet:
         break;
     }
+  }
+
+  Future<void> _saveAndAck(
+    HighRiskEnvelope envelope,
+    TelemetryTarget target,
+    int generation,
+  ) async {
+    if (!RegExp(r'^[a-f0-9]{32}$').hasMatch(envelope.durableId) ||
+        envelope.event.eventCategory != EventCategory.SECURITY ||
+        (envelope.event.riskClass != RiskClass.HIGH &&
+            envelope.event.riskClass != RiskClass.CRITICAL)) {
+      return;
+    }
+    final bool inserted;
+    try {
+      inserted = await _repository.ingestHighRisk(target.deviceKey, envelope);
+    } catch (_) {
+      if (_isCurrent(generation)) {
+        _storageError = true;
+        notifyListeners();
+      }
+      return;
+    }
+    if (!_isCurrent(generation)) return;
+    _storageError = false;
+    if (inserted) {
+      _messages = List.unmodifiable([
+        StoredTelemetryEvent(envelope.event, unread: true),
+        ..._messages.take(_repository.maximumEvents - 1),
+      ]);
+    }
+    if (inserted && Platform.isAndroid && _backgroundEnabled) {
+      unawaited(
+        _background
+            .invokeMethod<void>('notifyRisk', {
+              'id': envelope.durableId,
+              'message': envelope.event.summary.isEmpty
+                  ? '疑似高危无线行为'
+                  : envelope.event.summary,
+            })
+            .catchError((Object _) {}),
+      );
+    }
+    final transport = _transport;
+    if (transport is _GrpcTransport) {
+      try {
+        await transport.service.ackHighRisk(
+          AckHighRiskRequest(
+            phoneId: target.phoneId,
+            durableId: envelope.durableId,
+          ),
+          options: transport.unaryOptions,
+        );
+      } on GrpcError {
+        // A later delivery retries ACK against the already committed archive entry.
+      }
+    }
+    if (_isCurrent(generation)) notifyListeners();
   }
 
   Future<void> _store(
@@ -288,7 +509,14 @@ class TelemetryConnection extends ChangeNotifier {
   ) async {
     final bool inserted;
     try {
-      inserted = await _repository.ingest(target.deviceKey, event, cursor);
+      if (supportsV2) {
+        await _repository.saveCursor(target.deviceKey, cursor);
+        inserted = !_messages.any(
+          (item) => item.event.eventId == event.eventId,
+        );
+      } else {
+        inserted = await _repository.ingest(target.deviceKey, event, cursor);
+      }
     } catch (_) {
       if (_isCurrent(generation)) {
         _storageError = true;
@@ -340,11 +568,17 @@ class TelemetryConnection extends ChangeNotifier {
     } else if (error is FormatException) {
       _phase = TelemetryPhase.incompatible;
       _requested = false;
+    } else if (error is GrpcError &&
+        error.code == StatusCode.resourceExhausted) {
+      _phase = TelemetryPhase.stopped;
+      _requested = false;
+      _occupied = true;
     } else {
       _phase = TelemetryPhase.retrying;
       final target = _target!;
       final next = _generation;
       _retry = Timer(Duration(seconds: _backoffSeconds), () {
+        _retry = null;
         _subscribe(target, next);
       });
       _backoffSeconds = (_backoffSeconds * 2).clamp(1, 30);
@@ -356,6 +590,8 @@ class TelemetryConnection extends ChangeNotifier {
     _generation++;
     _retry?.cancel();
     _retry = null;
+    _freshness?.cancel();
+    _freshness = null;
     _stream?.cancel().ignore();
     _stream = null;
     _transport?.close().ignore();
@@ -366,6 +602,8 @@ class TelemetryConnection extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _endTransport();
+    snapshotRevision.dispose();
+    if (Platform.isAndroid) _background.setMethodCallHandler(null);
     super.dispose();
   }
 }

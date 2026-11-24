@@ -1,4 +1,5 @@
 #include "collectors.hpp"
+#include <openssl/sha.h>
 
 #include <algorithm>
 #include <charconv>
@@ -23,7 +24,9 @@ using Json = nlohmann::json;
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 constexpr std::size_t kResponseLimit = 1024 * 1024;
-constexpr size_t kDeviceLimit = 128;
+constexpr size_t kAccessPointLimit = 128;
+constexpr size_t kClientLimit = 256;
+constexpr size_t kDeviceLimit = kAccessPointLimit + kClientLimit;
 constexpr size_t kPriorityLimit = 8;
 
 int64_t unixMillis() {
@@ -357,6 +360,7 @@ struct MonitorState {
     std::string state;
     std::string reason;
     std::string source;
+    std::string epoch;
 };
 
 MonitorState readMonitor(const fs::path& path, int64_t now) {
@@ -370,8 +374,13 @@ MonitorState readMonitor(const fs::path& path, int64_t now) {
     }
     const auto doc = parseJson(std::string(buffer.data(), static_cast<size_t>(size)));
     const auto timestamp = unsignedNumber(field(doc, "timestamp_ms"));
-    if (!timestamp || *timestamp > static_cast<uint64_t>(now + 5000)
-        || *timestamp < static_cast<uint64_t>(std::max<int64_t>(now - 30000, 0))) {
+    const auto tick = unsignedNumber(field(doc, "boottime_ns"));
+    const auto monotonic = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
+    const bool stale = tick ? (*tick > static_cast<std::uint64_t>(monotonic) ||
+                                 static_cast<std::uint64_t>(monotonic) - *tick > 30000000000ull)
+        : (!timestamp || *timestamp > static_cast<std::uint64_t>(now + 5000) ||
+                        *timestamp < static_cast<std::uint64_t>(std::max<int64_t>(now - 30000, 0)));
+    if (stale) {
         return {"degraded", "monitor_state_stale", {}};
     }
     const auto state = string(field(doc, "state"), 16);
@@ -379,7 +388,7 @@ MonitorState readMonitor(const fs::path& path, int64_t now) {
     if (state == "starting" || state == "degraded") return {state, reason, {}};
     const auto source = uuid(field(doc, "datasource_uuid"));
     if (state != "ready" || source.empty()) return {"degraded", "monitor_state_invalid", {}};
-    return {state, reason, source};
+    return {state, reason, source, string(field(doc, "observation_epoch"), 64)};
 }
 
 std::optional<uint64_t> recentRate(const Json& rrd, int64_t now) {
@@ -407,7 +416,8 @@ bool exclusivelySeenBy(const Json& row, const std::string& source) {
 Json deviceFields(int64_t now) {
     return {
         {"fields", Json::array({
-            "kismet.device.base.type", "kismet.device.base.phyname", "kismet.device.base.macaddr", "kismet.device.base.channel",
+            "kismet.device.base.type", "kismet.device.base.key", "kismet.device.base.phyname",
+            "kismet.device.base.macaddr", "kismet.device.base.channel",
             "kismet.device.base.frequency", "kismet.device.base.crypt", "kismet.device.base.first_time",
             "kismet.device.base.last_time", "kismet.device.base.seenby",
             Json::array({"kismet.device.base.signal/kismet.common.signal.type", "signal_type"}),
@@ -415,6 +425,8 @@ Json deviceFields(int64_t now) {
             Json::array({"dot11.device/dot11.device.last_beaconed_ssid_record/dot11.advertisedssid.ssid", "ssid"}),
             Json::array({"dot11.device/dot11.device.last_beaconed_ssid_record/dot11.advertisedssid.cloaked", "ssid_hidden"}),
             Json::array({"dot11.device/dot11.device.last_beaconed_ssid_record/dot11.advertisedssid.crypt_string", "beacon_security"}),
+            Json::array({"dot11.device/dot11.device.last_bssid", "last_bssid"}),
+            Json::array({"dot11.device/dot11.device.associated_client_map", "associated_clients"}),
         })},
         {"datatable", true},
         {"last_time", std::max<int64_t>(0, now / 1000 - 300)},
@@ -427,7 +439,8 @@ struct AccessPoint {
 };
 
 v1::WirelessSummary summarize(const Json& data, const std::string& source, int64_t now,
-                              std::map<std::string, AccessPoint>& aps) {
+                              std::map<std::string, AccessPoint>& aps,
+                              std::vector<v1::ObservedDevice>& devices) {
     v1::WirelessSummary summary;
     const auto& rows = field(data, "data");
     auto total = unsignedNumber(field(data, "recordsFiltered"));
@@ -435,7 +448,26 @@ v1::WirelessSummary summarize(const Json& data, const std::string& source, int64
         summary.set_coverage("source_view_unavailable");
         return summary;
     }
-    std::set<std::string> clients;
+    std::map<std::string, v1::ObservedDevice> clients;
+    std::map<std::string, std::string> last_bssids;
+    std::map<std::string, const Json*> associations;
+    const auto info = [&](const auto& row, const std::string& address, int64_t last_seen) {
+        v1::ObservedDevice item;
+        const auto key = string(field(row, "kismet.device.base.key"), 96);
+        item.set_device_key(key.empty() ? address : key);
+        item.set_mac(address);
+        item.set_source_scope("managed_monitor");
+        const auto channel = string(field(row, "kismet.device.base.channel"), 24);
+        if (!channel.empty()) item.set_channel(channel);
+        const auto rssi = number(field(row, "signal_value"));
+        if (string(field(row, "signal_type"), 12) == "dbm" && rssi && *rssi < 0 && *rssi >= -160) {
+            item.set_rssi_dbm(static_cast<float>(*rssi));
+        }
+        const auto first = secondsMillis(field(row, "kismet.device.base.first_time"), now);
+        if (first > 0 && first <= last_seen) item.set_first_seen_ms(first);
+        item.set_last_seen_ms(last_seen);
+        return item;
+    };
     bool limited = *total > rows.size();
     for (const auto& row : rows) {
         if (string(field(row, "kismet.device.base.phyname"), 24) != "IEEE802.11") continue;
@@ -456,8 +488,24 @@ v1::WirelessSummary summarize(const Json& data, const std::string& source, int64
         // Each snapshot summarizes devices actually seen during the preceding five minutes.
         if (now - lastSeen > 300000) continue;
         const auto type = string(field(row, "kismet.device.base.type"), 32);
-        if (type == "Wi-Fi Client" || type == "Wi-Fi Client (Inferred)") clients.insert(address);
+        if (type == "Wi-Fi Client" || type == "Wi-Fi Client (Inferred)") {
+            if (!clients.count(address) && clients.size() == kClientLimit) {
+                limited = true;
+                continue;
+            }
+            auto item = info(row, address, lastSeen);
+            item.set_kind(v1::CLIENT);
+            item.set_association_state(v1::NOT_ESTABLISHED);
+            if (!clients.count(address) || lastSeen > clients.at(address).last_seen_ms()) {
+                last_bssids[address] = mac(field(row, "last_bssid"));
+                clients.insert_or_assign(address, std::move(item));
+            }
+        }
         if (type != "Wi-Fi AP") continue;
+        if (!aps.count(address) && aps.size() == kAccessPointLimit) {
+            limited = true;
+            continue;
+        }
         v1::PriorityAP ap;
         ap.set_bssid(address);
         if (flag(field(row, "ssid_hidden")) != true) ap.set_ssid(string(field(row, "ssid"), 128));
@@ -477,9 +525,34 @@ v1::WirelessSummary summarize(const Json& data, const std::string& source, int64
         auto existing = aps.find(address);
         if (existing == aps.end() || lastSeen > existing->second.lastSeen) {
             aps.insert_or_assign(address, AccessPoint{std::move(ap), lastSeen});
+            associations[address] = &row;
         }
     }
-    for (const auto& [address, _] : aps) clients.erase(address);
+    for (const auto& [address, ap] : aps) {
+        clients.erase(address);
+        auto item = info(*associations.at(address), address, ap.lastSeen);
+        item.set_kind(v1::AP);
+        item.set_bssid(address);
+        if (ap.metadata.has_ssid()) item.set_ssid(ap.metadata.ssid());
+        if (!ap.metadata.security().empty()) item.set_security(ap.metadata.security());
+        devices.push_back(std::move(item));
+    }
+    for (auto& [address, item] : clients) {
+        const auto ap = associations.find(last_bssids.at(address));
+        if (ap != associations.end()) {
+            const auto& peers = field(*ap->second, "associated_clients");
+            if (peers.is_object()) {
+                for (auto peer = peers.begin(); peer != peers.end(); ++peer) {
+                    if (mac(Json(peer.key())) == address && string(peer.value(), 96) == item.device_key()) {
+                        item.set_related_ap_bssid(ap->first);
+                        item.set_association_state(v1::CONFIRMED);
+                        break;
+                    }
+                }
+            }
+        }
+        devices.push_back(std::move(item));
+    }
     summary.set_ap_count(static_cast<uint32_t>(aps.size()));
     summary.set_client_count(static_cast<uint32_t>(clients.size()));
     summary.set_truncated(limited);
@@ -497,48 +570,6 @@ v1::WirelessSummary summarize(const Json& data, const std::string& source, int64
     if (strongest.size() > kPriorityLimit) strongest.resize(kPriorityLimit);
     for (const auto* ap : strongest) *summary.add_priority_aps() = ap->metadata;
     return summary;
-}
-
-std::vector<v1::MonitoringEvent> alerts(const Json& data, const std::map<std::string, AccessPoint>& aps,
-                                        int64_t now, const std::string& source) {
-    std::vector<v1::MonitoringEvent> result;
-    if (!data.is_array() || data.size() > 256) return result;
-    for (const auto& row : data) {
-        const auto timestamp = secondsMillis(field(row, "kismet.alert.timestamp"), now);
-        if (!timestamp || timestamp > now || now - timestamp > 300000) continue;
-        const auto name = string(field(row, "kismet.alert.header"), 64);
-        const auto id = unsignedNumber(field(row, "kismet.alert.hash"));
-        if (name.empty() || !id) continue;
-        std::string bssid;
-        for (const char* key : {"kismet.alert.bssid", "kismet.alert.source_mac",
-                                "kismet.alert.transmitter_mac", "kismet.alert.dest_mac"}) {
-            auto address = mac(field(row, key));
-            auto found = aps.find(address);
-            if (found == aps.end() || found->second.metadata.first_seen_ms() == 0
-                || found->second.metadata.first_seen_ms() > timestamp
-                || found->second.lastSeen + 1000 < timestamp) continue;
-            bssid = std::move(address);
-            break;
-        }
-        if (bssid.empty()) continue;
-        v1::MonitoringEvent event;
-        event.set_event_id("kismet:" + source + ":" + std::to_string(timestamp) + ":" + std::to_string(*id));
-        event.set_evidence_id(std::to_string(*id));
-        event.set_timestamp_ms(timestamp);
-        event.set_event_type("kismet_alert:" + name);
-        event.set_source("Kismet");
-        event.set_bssid(bssid);
-        auto description = string(field(row, "kismet.alert.text"), 384);
-        event.set_description(description.empty() ? name : description);
-        const auto severity = unsignedNumber(field(row, "kismet.alert.severity")).value_or(0);
-        event.set_priority(severity >= 20 ? v1::P0 : (severity >= 15 ? v1::P1 : (severity >= 5 ? v1::P2 : v1::P3)));
-        event.set_occurrences(1);
-        result.push_back(std::move(event));
-    }
-    std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) {
-        return a.timestamp_ms() < b.timestamp_ms();
-    });
-    return result;
 }
 
 }  // namespace
@@ -619,7 +650,7 @@ KismetCollector::KismetCollector(std::string url, std::string api_key, fs::path 
     if (!url_.empty() && url_.back() == '/') url_.pop_back();
 }
 
-KismetSample KismetCollector::sample() {
+KismetSample KismetCollector::sample(bool include_devices) {
     KismetSample sample;
     const auto now = unixMillis();
     sample.capture.set_sampled_at_ms(now);
@@ -666,6 +697,7 @@ KismetSample KismetCollector::sample() {
         return sample;
     }
     sample.capture.set_datasource_uuid(monitor.source);
+    sample.observation_epoch = monitor.epoch;
     const auto running = flag(field(*source, "kismet.datasource.running"));
     const auto paused = flag(field(*source, "kismet.datasource.paused"));
     const auto error = flag(field(*source, "kismet.datasource.error"));
@@ -712,19 +744,70 @@ KismetSample KismetCollector::sample() {
             sample.capture.set_packet_statistics_source("kismet_datasource_and_single_source_packet_chain");
         }
     }
+    if (!include_devices) {
+        sample.wireless.set_coverage("resource_fallback");
+        return sample;
+    }
     std::string upper = monitor.source;
     for (auto& ch : upper) if (ch >= 'a' && ch <= 'f') ch -= 'a' - 'A';
     const auto view = request(url_, api_key_, "/devices/views/seenby-" + upper + "/devices.json", deviceFields(now), true);
     std::map<std::string, AccessPoint> aps;
-    sample.wireless = summarize(view.data, monitor.source, now, aps);
+    sample.wireless = summarize(view.data, monitor.source, now, aps, sample.devices);
     if (sample.wireless.has_ap_count()) {
         sample.capture.set_tracked_devices(uint64_t(sample.wireless.ap_count()) + sample.wireless.client_count());
     }
-    // Older alert records carry no capture-source UUID. Do not attribute multi-source histories.
-    if (sources.size() == 1 && !aps.empty()) {
-        sample.events = alerts(request(url_, api_key_, "/alerts/all_alerts.json").data, aps, now, monitor.source);
-    }
     return sample;
+}
+
+KismetAlerts KismetCollector::sample_alerts() const {
+    KismetAlerts output;
+    if (!loopbackUrl(url_) || !validApiKey(api_key_)) return output;
+    const auto reply = request(url_, api_key_, "/alerts/all_alerts.json");
+    if (!reply.data.is_array() || reply.data.size() > 1024) return output;
+    output.reachable = true;
+    const auto now = unixMillis();
+    for (const auto& row : reply.data) {
+        const auto timestamp = secondsMillis(field(row, "kismet.alert.timestamp"), now);
+        const auto name = string(field(row, "kismet.alert.header"), 64);
+        if (timestamp == 0 || timestamp > now || now - timestamp > 300000 || name.empty()) continue;
+        const auto description = string(field(row, "kismet.alert.text"), 384);
+        const auto bssid = mac(field(row, "kismet.alert.bssid"));
+        const auto source_mac = mac(field(row, "kismet.alert.source_mac"));
+        const auto transmitter = mac(field(row, "kismet.alert.transmitter_mac"));
+        const auto receiver = mac(field(row, "kismet.alert.dest_mac"));
+        const auto severity = unsignedNumber(field(row, "kismet.alert.severity")).value_or(0);
+        const auto key = Json::array({name, timestamp, bssid, source_mac, transmitter, receiver, description}).dump();
+        unsigned char digest[SHA256_DIGEST_LENGTH]{};
+        SHA256(reinterpret_cast<const unsigned char*>(key.data()), key.size(), digest);
+        std::string id = "kismet:";
+        constexpr char hex[] = "0123456789abcdef";
+        for (auto byte : digest) {
+            id.push_back(hex[byte >> 4]);
+            id.push_back(hex[byte & 15]);
+        }
+        v1::MonitoringEvent event;
+        event.set_event_id(id);
+        event.set_evidence_id(id.substr(7, 24));
+        event.set_timestamp_ms(timestamp);
+        event.set_observed_at_ms(timestamp);
+        event.set_event_type("kismet_alert:" + name);
+        event.set_source("Kismet");
+        event.set_source_scope("kismet_instance");
+        event.set_event_category(v1::SECURITY);
+        if (!bssid.empty()) event.set_bssid(bssid);
+        event.set_description(description.empty() ? name : description);
+        // Rule set v1: native, high-severity management-frame alerts with a specific BSS and text.
+        const bool selected = name == "DEAUTHFLOOD" || name == "BCASTDISCON" ||
+                              name == "DOT11CSAFLOOD" || name == "DOT11CSASPOOF";
+        const bool supported = selected && severity >= 15 && !bssid.empty() && !description.empty();
+        event.set_confidence(supported ? v1::CORROBORATED : v1::LIMITED);
+        event.set_risk_class(supported ? (severity >= 20 ? v1::CRITICAL : v1::HIGH) : v1::SUSPICIOUS);
+        event.set_summary(supported ? "疑似高危无线行为" : "Kismet 无线异常观测");
+        event.set_priority(severity >= 20 ? v1::P0 : (severity >= 15 ? v1::P1 : v1::P2));
+        event.set_occurrences(1);
+        output.events.push_back(std::move(event));
+    }
+    return output;
 }
 
 }  // namespace pocketnet::telemetry

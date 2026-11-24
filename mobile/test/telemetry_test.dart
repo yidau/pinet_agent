@@ -80,15 +80,45 @@ void main() {
     },
   );
 
-  testWidgets('AI tab displays its deferred feature placeholder', (
+  testWidgets('reserved tabs show a placeholder without device actions', (
     tester,
   ) async {
     await tester.pumpWidget(const PocketNetApp());
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('深度检测'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('AI（暂缓）'));
+    expect(find.text('尚未开放'), findsOneWidget);
+    await tester.tap(find.text('主动测试'));
     await tester.pumpAndSettle();
-    expect(find.text('AI 功能暂缓开发'), findsOneWidget);
+    expect(find.text('尚未开放'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  test('high risk archive survives ordinary trimming and suppresses deleted replay', () async {
+    final repository = _repository(limit: 2);
+    final event = MonitoringEvent(
+      eventId: 'unrelated-ordinary-id',
+      timestampMs: Int64(10),
+      eventCategory: EventCategory.SECURITY,
+      riskClass: RiskClass.HIGH,
+    );
+    final envelope = HighRiskEnvelope(durableId: 'a' * 32, event: event);
+    expect(await repository.ingestHighRisk('pi', envelope), isTrue);
+    expect(await repository.ingestHighRisk('pi', envelope), isFalse);
+    for (var i = 1; i <= 6; i++) {
+      await repository.ingest('pi', MonitoringEvent(eventId: 'normal-$i'), (
+        bootId: 'boot',
+        sequence: Int64(i),
+      ));
+    }
+    expect((await repository.load('pi')).messages.length, 2);
+    expect(
+      (await repository.highRiskPage('pi', 0)).single.envelope.durableId,
+      envelope.durableId,
+    );
+    await repository.updateHighRisk('pi', envelope.durableId, delete: true);
+    expect(await repository.ingestHighRisk('pi', envelope), isFalse);
+    expect(await repository.highRiskPage('pi', 0), isEmpty);
   });
 
   test(
@@ -183,8 +213,14 @@ void main() {
       final durable = await repository.load(target.deviceKey);
       expect(durable.cursor, (bootId: 'boot-b', sequence: Int64(1)));
       expect(durable.messages.first.event.eventId, 'boot-b:1');
-      expect(durable.messages.map((item) => item.event.eventId), contains('boot-a:4'));
-      expect(durable.messages.map((item) => item.event.eventId), contains('gap:boot-b:cursor_reset:0'));
+      expect(
+        durable.messages.map((item) => item.event.eventId),
+        contains('boot-a:4'),
+      );
+      expect(
+        durable.messages.map((item) => item.event.eventId),
+        contains('gap:boot-b:cursor_reset:0'),
+      );
       await second.frames.close();
       await _until(() => sessions.length == 3);
       expect(sessions.last.request.lastBootId, 'boot-b');
@@ -262,7 +298,7 @@ void main() {
     await tester.pumpWidget(
       app(DashboardPage(connection: feed, onOpenMessages: () {})),
     );
-    expect(find.text('实时遥测'), findsOneWidget);
+    expect(find.text('设备在线，监听受限'), findsOneWidget);
     expect(find.text('22.0%'), findsOneWidget);
     expect(find.text('未报告'), findsWidgets);
     await tester.pumpWidget(app(MessagePage(connection: feed)));
@@ -343,6 +379,30 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
   String? deviceId;
 
   void finish() => _finished.complete();
+
+  @override
+  Future<AckHighRiskResponse> ackHighRisk(
+    ServiceCall call,
+    AckHighRiskRequest request,
+  ) async => throw const GrpcError.unimplemented();
+
+  @override
+  Future<ObservedDevicesPage> getObservedDevices(
+    ServiceCall call,
+    ObservedDevicesRequest request,
+  ) async => throw const GrpcError.unimplemented();
+
+  @override
+  Future<ControlCommandResponse> setCaptureProfile(
+    ServiceCall call,
+    SetCaptureProfileRequest request,
+  ) async => throw const GrpcError.unimplemented();
+
+  @override
+  Future<ControlCommandResponse> recoverComponent(
+    ServiceCall call,
+    RecoverComponentRequest request,
+  ) async => throw const GrpcError.unimplemented();
 
   @override
   Stream<TelemetryMessage> subscribe(

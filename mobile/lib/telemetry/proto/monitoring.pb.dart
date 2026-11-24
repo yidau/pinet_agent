@@ -26,11 +26,13 @@ class SubscribeRequest extends $pb.GeneratedMessage {
     $core.String? deviceId,
     $fixnum.Int64? lastEventSequence,
     $core.String? lastBootId,
+    $core.bool? acceptsHighRisk,
   }) {
     final result = SubscribeRequest._();
     if (deviceId != null) result.deviceId = deviceId;
     if (lastEventSequence != null) result.lastEventSequence = lastEventSequence;
     if (lastBootId != null) result.lastBootId = lastBootId;
+    if (acceptsHighRisk != null) result.acceptsHighRisk = acceptsHighRisk;
     return result;
   }
 
@@ -52,6 +54,7 @@ class SubscribeRequest extends $pb.GeneratedMessage {
         2, _omitFieldNames ? '' : 'lastEventSequence', $pb.PbFieldType.OU6,
         defaultOrMaker: $fixnum.Int64.ZERO)
     ..aOS(3, _omitFieldNames ? '' : 'lastBootId')
+    ..aOB(4, _omitFieldNames ? '' : 'acceptsHighRisk')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -94,6 +97,7 @@ class SubscribeRequest extends $pb.GeneratedMessage {
   @$pb.TagNumber(2)
   void clearLastEventSequence() => $_clearField(2);
 
+  /// Replay epoch received in boot_id, opaque to clients.
   @$pb.TagNumber(3)
   $core.String get lastBootId => $_getSZ(2);
   @$pb.TagNumber(3)
@@ -102,20 +106,31 @@ class SubscribeRequest extends $pb.GeneratedMessage {
   $core.bool hasLastBootId() => $_has(2);
   @$pb.TagNumber(3)
   void clearLastBootId() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.bool get acceptsHighRisk => $_getBF(3);
+  @$pb.TagNumber(4)
+  set acceptsHighRisk($core.bool value) => $_setBool(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasAcceptsHighRisk() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearAcceptsHighRisk() => $_clearField(4);
 }
 
-enum TelemetryMessage_Payload { snapshot, event, historyGap, notSet }
+enum TelemetryMessage_Payload { snapshot, event, historyGap, highRisk, notSet }
 
 class TelemetryMessage extends $pb.GeneratedMessage {
   factory TelemetryMessage({
     MonitoringSnapshot? snapshot,
     MonitoringEvent? event,
     HistoryGap? historyGap,
+    HighRiskEnvelope? highRisk,
   }) {
     final result = TelemetryMessage._();
     if (snapshot != null) result.snapshot = snapshot;
     if (event != null) result.event = event;
     if (historyGap != null) result.historyGap = historyGap;
+    if (highRisk != null) result.highRisk = highRisk;
     return result;
   }
 
@@ -133,19 +148,22 @@ class TelemetryMessage extends $pb.GeneratedMessage {
     1: TelemetryMessage_Payload.snapshot,
     2: TelemetryMessage_Payload.event,
     3: TelemetryMessage_Payload.historyGap,
+    4: TelemetryMessage_Payload.highRisk,
     0: TelemetryMessage_Payload.notSet
   };
   static final $pb.BuilderInfo _i = $pb.BuilderInfo(
       _omitMessageNames ? '' : 'TelemetryMessage',
       package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
       createEmptyInstance: TelemetryMessage.$_createMessage)
-    ..oo(0, [1, 2, 3])
+    ..oo(0, [1, 2, 3, 4])
     ..aOM<MonitoringSnapshot>(1, _omitFieldNames ? '' : 'snapshot',
         subBuilder: MonitoringSnapshot.$_createMessage)
     ..aOM<MonitoringEvent>(2, _omitFieldNames ? '' : 'event',
         subBuilder: MonitoringEvent.$_createMessage)
     ..aOM<HistoryGap>(3, _omitFieldNames ? '' : 'historyGap',
         subBuilder: HistoryGap.$_createMessage)
+    ..aOM<HighRiskEnvelope>(4, _omitFieldNames ? '' : 'highRisk',
+        subBuilder: HighRiskEnvelope.$_createMessage)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -173,11 +191,13 @@ class TelemetryMessage extends $pb.GeneratedMessage {
   @$pb.TagNumber(1)
   @$pb.TagNumber(2)
   @$pb.TagNumber(3)
+  @$pb.TagNumber(4)
   TelemetryMessage_Payload whichPayload() =>
       _TelemetryMessage_PayloadByTag[$_whichOneof(0)]!;
   @$pb.TagNumber(1)
   @$pb.TagNumber(2)
   @$pb.TagNumber(3)
+  @$pb.TagNumber(4)
   void clearPayload() => $_clearField($_whichOneof(0));
 
   @$pb.TagNumber(1)
@@ -212,6 +232,17 @@ class TelemetryMessage extends $pb.GeneratedMessage {
   void clearHistoryGap() => $_clearField(3);
   @$pb.TagNumber(3)
   HistoryGap ensureHistoryGap() => $_ensure(2);
+
+  @$pb.TagNumber(4)
+  HighRiskEnvelope get highRisk => $_getN(3);
+  @$pb.TagNumber(4)
+  set highRisk(HighRiskEnvelope value) => $_setField(4, value);
+  @$pb.TagNumber(4)
+  $core.bool hasHighRisk() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearHighRisk() => $_clearField(4);
+  @$pb.TagNumber(4)
+  HighRiskEnvelope ensureHighRisk() => $_ensure(3);
 }
 
 class HistoryGap extends $pb.GeneratedMessage {
@@ -307,6 +338,14 @@ class MonitoringSnapshot extends $pb.GeneratedMessage {
     $core.int? schemaVersion,
     $fixnum.Int64? latestEventSequence,
     DeliveryMetrics? delivery,
+    DeviceHealth? deviceHealth,
+    CapturePolicyStatus? capturePolicy,
+    ObservationSession? observationSession,
+    HighRiskDeliveryStatus? highRiskDelivery,
+    $core.int? capabilityVersion,
+    $core.Iterable<$core.String>? supportedFeatures,
+    $core.String? deviceBootId,
+    ResourcePressureStatus? resourcePressure,
   }) {
     final result = MonitoringSnapshot._();
     if (bootId != null) result.bootId = bootId;
@@ -319,6 +358,16 @@ class MonitoringSnapshot extends $pb.GeneratedMessage {
     if (latestEventSequence != null)
       result.latestEventSequence = latestEventSequence;
     if (delivery != null) result.delivery = delivery;
+    if (deviceHealth != null) result.deviceHealth = deviceHealth;
+    if (capturePolicy != null) result.capturePolicy = capturePolicy;
+    if (observationSession != null)
+      result.observationSession = observationSession;
+    if (highRiskDelivery != null) result.highRiskDelivery = highRiskDelivery;
+    if (capabilityVersion != null) result.capabilityVersion = capabilityVersion;
+    if (supportedFeatures != null)
+      result.supportedFeatures.addAll(supportedFeatures);
+    if (deviceBootId != null) result.deviceBootId = deviceBootId;
+    if (resourcePressure != null) result.resourcePressure = resourcePressure;
     return result;
   }
 
@@ -353,6 +402,20 @@ class MonitoringSnapshot extends $pb.GeneratedMessage {
         defaultOrMaker: $fixnum.Int64.ZERO)
     ..aOM<DeliveryMetrics>(9, _omitFieldNames ? '' : 'delivery',
         subBuilder: DeliveryMetrics.$_createMessage)
+    ..aOM<DeviceHealth>(10, _omitFieldNames ? '' : 'deviceHealth',
+        subBuilder: DeviceHealth.$_createMessage)
+    ..aOM<CapturePolicyStatus>(11, _omitFieldNames ? '' : 'capturePolicy',
+        subBuilder: CapturePolicyStatus.$_createMessage)
+    ..aOM<ObservationSession>(12, _omitFieldNames ? '' : 'observationSession',
+        subBuilder: ObservationSession.$_createMessage)
+    ..aOM<HighRiskDeliveryStatus>(13, _omitFieldNames ? '' : 'highRiskDelivery',
+        subBuilder: HighRiskDeliveryStatus.$_createMessage)
+    ..aI(14, _omitFieldNames ? '' : 'capabilityVersion',
+        fieldType: $pb.PbFieldType.OU3)
+    ..pPS(15, _omitFieldNames ? '' : 'supportedFeatures')
+    ..aOS(16, _omitFieldNames ? '' : 'deviceBootId')
+    ..aOM<ResourcePressureStatus>(17, _omitFieldNames ? '' : 'resourcePressure',
+        subBuilder: ResourcePressureStatus.$_createMessage)
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -377,6 +440,7 @@ class MonitoringSnapshot extends $pb.GeneratedMessage {
           MonitoringSnapshot.$_createMessage);
   static MonitoringSnapshot? _defaultInstance;
 
+  /// Replay epoch: Linux boot identifier followed by a per-process identifier.
   @$pb.TagNumber(1)
   $core.String get bootId => $_getSZ(0);
   @$pb.TagNumber(1)
@@ -465,6 +529,82 @@ class MonitoringSnapshot extends $pb.GeneratedMessage {
   void clearDelivery() => $_clearField(9);
   @$pb.TagNumber(9)
   DeliveryMetrics ensureDelivery() => $_ensure(8);
+
+  @$pb.TagNumber(10)
+  DeviceHealth get deviceHealth => $_getN(9);
+  @$pb.TagNumber(10)
+  set deviceHealth(DeviceHealth value) => $_setField(10, value);
+  @$pb.TagNumber(10)
+  $core.bool hasDeviceHealth() => $_has(9);
+  @$pb.TagNumber(10)
+  void clearDeviceHealth() => $_clearField(10);
+  @$pb.TagNumber(10)
+  DeviceHealth ensureDeviceHealth() => $_ensure(9);
+
+  @$pb.TagNumber(11)
+  CapturePolicyStatus get capturePolicy => $_getN(10);
+  @$pb.TagNumber(11)
+  set capturePolicy(CapturePolicyStatus value) => $_setField(11, value);
+  @$pb.TagNumber(11)
+  $core.bool hasCapturePolicy() => $_has(10);
+  @$pb.TagNumber(11)
+  void clearCapturePolicy() => $_clearField(11);
+  @$pb.TagNumber(11)
+  CapturePolicyStatus ensureCapturePolicy() => $_ensure(10);
+
+  @$pb.TagNumber(12)
+  ObservationSession get observationSession => $_getN(11);
+  @$pb.TagNumber(12)
+  set observationSession(ObservationSession value) => $_setField(12, value);
+  @$pb.TagNumber(12)
+  $core.bool hasObservationSession() => $_has(11);
+  @$pb.TagNumber(12)
+  void clearObservationSession() => $_clearField(12);
+  @$pb.TagNumber(12)
+  ObservationSession ensureObservationSession() => $_ensure(11);
+
+  @$pb.TagNumber(13)
+  HighRiskDeliveryStatus get highRiskDelivery => $_getN(12);
+  @$pb.TagNumber(13)
+  set highRiskDelivery(HighRiskDeliveryStatus value) => $_setField(13, value);
+  @$pb.TagNumber(13)
+  $core.bool hasHighRiskDelivery() => $_has(12);
+  @$pb.TagNumber(13)
+  void clearHighRiskDelivery() => $_clearField(13);
+  @$pb.TagNumber(13)
+  HighRiskDeliveryStatus ensureHighRiskDelivery() => $_ensure(12);
+
+  @$pb.TagNumber(14)
+  $core.int get capabilityVersion => $_getIZ(13);
+  @$pb.TagNumber(14)
+  set capabilityVersion($core.int value) => $_setUnsignedInt32(13, value);
+  @$pb.TagNumber(14)
+  $core.bool hasCapabilityVersion() => $_has(13);
+  @$pb.TagNumber(14)
+  void clearCapabilityVersion() => $_clearField(14);
+
+  @$pb.TagNumber(15)
+  $pb.PbList<$core.String> get supportedFeatures => $_getList(14);
+
+  @$pb.TagNumber(16)
+  $core.String get deviceBootId => $_getSZ(15);
+  @$pb.TagNumber(16)
+  set deviceBootId($core.String value) => $_setString(15, value);
+  @$pb.TagNumber(16)
+  $core.bool hasDeviceBootId() => $_has(15);
+  @$pb.TagNumber(16)
+  void clearDeviceBootId() => $_clearField(16);
+
+  @$pb.TagNumber(17)
+  ResourcePressureStatus get resourcePressure => $_getN(16);
+  @$pb.TagNumber(17)
+  set resourcePressure(ResourcePressureStatus value) => $_setField(17, value);
+  @$pb.TagNumber(17)
+  $core.bool hasResourcePressure() => $_has(16);
+  @$pb.TagNumber(17)
+  void clearResourcePressure() => $_clearField(17);
+  @$pb.TagNumber(17)
+  ResourcePressureStatus ensureResourcePressure() => $_ensure(16);
 }
 
 class SystemMetrics extends $pb.GeneratedMessage {
@@ -1376,6 +1516,12 @@ class MonitoringEvent extends $pb.GeneratedMessage {
     $core.String? description,
     $core.String? evidenceId,
     $core.int? occurrences,
+    EventCategory? eventCategory,
+    RiskClass? riskClass,
+    Confidence? confidence,
+    $core.String? sourceScope,
+    $core.String? summary,
+    $fixnum.Int64? observedAtMs,
   }) {
     final result = MonitoringEvent._();
     if (bootId != null) result.bootId = bootId;
@@ -1389,6 +1535,12 @@ class MonitoringEvent extends $pb.GeneratedMessage {
     if (description != null) result.description = description;
     if (evidenceId != null) result.evidenceId = evidenceId;
     if (occurrences != null) result.occurrences = occurrences;
+    if (eventCategory != null) result.eventCategory = eventCategory;
+    if (riskClass != null) result.riskClass = riskClass;
+    if (confidence != null) result.confidence = confidence;
+    if (sourceScope != null) result.sourceScope = sourceScope;
+    if (summary != null) result.summary = summary;
+    if (observedAtMs != null) result.observedAtMs = observedAtMs;
     return result;
   }
 
@@ -1420,6 +1572,15 @@ class MonitoringEvent extends $pb.GeneratedMessage {
     ..aOS(10, _omitFieldNames ? '' : 'evidenceId')
     ..aI(11, _omitFieldNames ? '' : 'occurrences',
         fieldType: $pb.PbFieldType.OU3)
+    ..aE<EventCategory>(12, _omitFieldNames ? '' : 'eventCategory',
+        enumValues: EventCategory.values)
+    ..aE<RiskClass>(13, _omitFieldNames ? '' : 'riskClass',
+        enumValues: RiskClass.values)
+    ..aE<Confidence>(14, _omitFieldNames ? '' : 'confidence',
+        enumValues: Confidence.values)
+    ..aOS(15, _omitFieldNames ? '' : 'sourceScope')
+    ..aOS(16, _omitFieldNames ? '' : 'summary')
+    ..aInt64(17, _omitFieldNames ? '' : 'observedAtMs')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -1542,6 +1703,60 @@ class MonitoringEvent extends $pb.GeneratedMessage {
   $core.bool hasOccurrences() => $_has(10);
   @$pb.TagNumber(11)
   void clearOccurrences() => $_clearField(11);
+
+  @$pb.TagNumber(12)
+  EventCategory get eventCategory => $_getN(11);
+  @$pb.TagNumber(12)
+  set eventCategory(EventCategory value) => $_setField(12, value);
+  @$pb.TagNumber(12)
+  $core.bool hasEventCategory() => $_has(11);
+  @$pb.TagNumber(12)
+  void clearEventCategory() => $_clearField(12);
+
+  @$pb.TagNumber(13)
+  RiskClass get riskClass => $_getN(12);
+  @$pb.TagNumber(13)
+  set riskClass(RiskClass value) => $_setField(13, value);
+  @$pb.TagNumber(13)
+  $core.bool hasRiskClass() => $_has(12);
+  @$pb.TagNumber(13)
+  void clearRiskClass() => $_clearField(13);
+
+  @$pb.TagNumber(14)
+  Confidence get confidence => $_getN(13);
+  @$pb.TagNumber(14)
+  set confidence(Confidence value) => $_setField(14, value);
+  @$pb.TagNumber(14)
+  $core.bool hasConfidence() => $_has(13);
+  @$pb.TagNumber(14)
+  void clearConfidence() => $_clearField(14);
+
+  @$pb.TagNumber(15)
+  $core.String get sourceScope => $_getSZ(14);
+  @$pb.TagNumber(15)
+  set sourceScope($core.String value) => $_setString(14, value);
+  @$pb.TagNumber(15)
+  $core.bool hasSourceScope() => $_has(14);
+  @$pb.TagNumber(15)
+  void clearSourceScope() => $_clearField(15);
+
+  @$pb.TagNumber(16)
+  $core.String get summary => $_getSZ(15);
+  @$pb.TagNumber(16)
+  set summary($core.String value) => $_setString(15, value);
+  @$pb.TagNumber(16)
+  $core.bool hasSummary() => $_has(15);
+  @$pb.TagNumber(16)
+  void clearSummary() => $_clearField(16);
+
+  @$pb.TagNumber(17)
+  $fixnum.Int64 get observedAtMs => $_getI64(16);
+  @$pb.TagNumber(17)
+  set observedAtMs($fixnum.Int64 value) => $_setInt64(16, value);
+  @$pb.TagNumber(17)
+  $core.bool hasObservedAtMs() => $_has(16);
+  @$pb.TagNumber(17)
+  void clearObservedAtMs() => $_clearField(17);
 }
 
 class DeliveryMetrics extends $pb.GeneratedMessage {
@@ -1628,6 +1843,1590 @@ class DeliveryMetrics extends $pb.GeneratedMessage {
   $core.bool hasPendingEvents() => $_has(2);
   @$pb.TagNumber(3)
   void clearPendingEvents() => $_clearField(3);
+}
+
+class HighRiskEnvelope extends $pb.GeneratedMessage {
+  factory HighRiskEnvelope({
+    $core.String? durableId,
+    MonitoringEvent? event,
+    $core.int? ttlSeconds,
+    $fixnum.Int64? enqueuedWallMs,
+  }) {
+    final result = HighRiskEnvelope._();
+    if (durableId != null) result.durableId = durableId;
+    if (event != null) result.event = event;
+    if (ttlSeconds != null) result.ttlSeconds = ttlSeconds;
+    if (enqueuedWallMs != null) result.enqueuedWallMs = enqueuedWallMs;
+    return result;
+  }
+
+  HighRiskEnvelope._();
+
+  factory HighRiskEnvelope.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      HighRiskEnvelope()..mergeFromBuffer(data, registry);
+  factory HighRiskEnvelope.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      HighRiskEnvelope()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'HighRiskEnvelope',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: HighRiskEnvelope.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'durableId')
+    ..aOM<MonitoringEvent>(2, _omitFieldNames ? '' : 'event',
+        subBuilder: MonitoringEvent.$_createMessage)
+    ..aI(3, _omitFieldNames ? '' : 'ttlSeconds', fieldType: $pb.PbFieldType.OU3)
+    ..aInt64(4, _omitFieldNames ? '' : 'enqueuedWallMs')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  HighRiskEnvelope clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  HighRiskEnvelope copyWith(void Function(HighRiskEnvelope) updates) =>
+      super.copyWith((message) => updates(message as HighRiskEnvelope))
+          as HighRiskEnvelope;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use HighRiskEnvelope() / HighRiskEnvelope.new instead')
+  static HighRiskEnvelope create() => HighRiskEnvelope._();
+  static $pb.GeneratedMessage $_createMessage() => HighRiskEnvelope._();
+  @$core.override
+  HighRiskEnvelope createEmptyInstance() => HighRiskEnvelope._();
+  @$core.pragma('dart2js:noInline')
+  static HighRiskEnvelope getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<HighRiskEnvelope>(
+          HighRiskEnvelope.$_createMessage);
+  static HighRiskEnvelope? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get durableId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set durableId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasDurableId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearDurableId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  MonitoringEvent get event => $_getN(1);
+  @$pb.TagNumber(2)
+  set event(MonitoringEvent value) => $_setField(2, value);
+  @$pb.TagNumber(2)
+  $core.bool hasEvent() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearEvent() => $_clearField(2);
+  @$pb.TagNumber(2)
+  MonitoringEvent ensureEvent() => $_ensure(1);
+
+  @$pb.TagNumber(3)
+  $core.int get ttlSeconds => $_getIZ(2);
+  @$pb.TagNumber(3)
+  set ttlSeconds($core.int value) => $_setUnsignedInt32(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasTtlSeconds() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearTtlSeconds() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $fixnum.Int64 get enqueuedWallMs => $_getI64(3);
+  @$pb.TagNumber(4)
+  set enqueuedWallMs($fixnum.Int64 value) => $_setInt64(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasEnqueuedWallMs() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearEnqueuedWallMs() => $_clearField(4);
+}
+
+class AckHighRiskRequest extends $pb.GeneratedMessage {
+  factory AckHighRiskRequest({
+    $core.String? phoneId,
+    $core.String? durableId,
+  }) {
+    final result = AckHighRiskRequest._();
+    if (phoneId != null) result.phoneId = phoneId;
+    if (durableId != null) result.durableId = durableId;
+    return result;
+  }
+
+  AckHighRiskRequest._();
+
+  factory AckHighRiskRequest.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      AckHighRiskRequest()..mergeFromBuffer(data, registry);
+  factory AckHighRiskRequest.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      AckHighRiskRequest()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'AckHighRiskRequest',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: AckHighRiskRequest.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'phoneId')
+    ..aOS(2, _omitFieldNames ? '' : 'durableId')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  AckHighRiskRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  AckHighRiskRequest copyWith(void Function(AckHighRiskRequest) updates) =>
+      super.copyWith((message) => updates(message as AckHighRiskRequest))
+          as AckHighRiskRequest;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use AckHighRiskRequest() / AckHighRiskRequest.new instead')
+  static AckHighRiskRequest create() => AckHighRiskRequest._();
+  static $pb.GeneratedMessage $_createMessage() => AckHighRiskRequest._();
+  @$core.override
+  AckHighRiskRequest createEmptyInstance() => AckHighRiskRequest._();
+  @$core.pragma('dart2js:noInline')
+  static AckHighRiskRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<AckHighRiskRequest>(
+          AckHighRiskRequest.$_createMessage);
+  static AckHighRiskRequest? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get phoneId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set phoneId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPhoneId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPhoneId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get durableId => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set durableId($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasDurableId() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearDurableId() => $_clearField(2);
+}
+
+class AckHighRiskResponse extends $pb.GeneratedMessage {
+  factory AckHighRiskResponse({
+    $core.String? result,
+  }) {
+    final result$ = AckHighRiskResponse._();
+    if (result != null) result$.result = result;
+    return result$;
+  }
+
+  AckHighRiskResponse._();
+
+  factory AckHighRiskResponse.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      AckHighRiskResponse()..mergeFromBuffer(data, registry);
+  factory AckHighRiskResponse.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      AckHighRiskResponse()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'AckHighRiskResponse',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: AckHighRiskResponse.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'result')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  AckHighRiskResponse clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  AckHighRiskResponse copyWith(void Function(AckHighRiskResponse) updates) =>
+      super.copyWith((message) => updates(message as AckHighRiskResponse))
+          as AckHighRiskResponse;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core
+      .Deprecated('Use AckHighRiskResponse() / AckHighRiskResponse.new instead')
+  static AckHighRiskResponse create() => AckHighRiskResponse._();
+  static $pb.GeneratedMessage $_createMessage() => AckHighRiskResponse._();
+  @$core.override
+  AckHighRiskResponse createEmptyInstance() => AckHighRiskResponse._();
+  @$core.pragma('dart2js:noInline')
+  static AckHighRiskResponse getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<AckHighRiskResponse>(
+          AckHighRiskResponse.$_createMessage);
+  static AckHighRiskResponse? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get result => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set result($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasResult() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearResult() => $_clearField(1);
+}
+
+class CapturePolicyStatus extends $pb.GeneratedMessage {
+  factory CapturePolicyStatus({
+    $core.String? requested,
+    $core.String? actual,
+    $core.String? phase,
+    $core.String? reason,
+    $core.bool? pressureForced,
+  }) {
+    final result = CapturePolicyStatus._();
+    if (requested != null) result.requested = requested;
+    if (actual != null) result.actual = actual;
+    if (phase != null) result.phase = phase;
+    if (reason != null) result.reason = reason;
+    if (pressureForced != null) result.pressureForced = pressureForced;
+    return result;
+  }
+
+  CapturePolicyStatus._();
+
+  factory CapturePolicyStatus.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      CapturePolicyStatus()..mergeFromBuffer(data, registry);
+  factory CapturePolicyStatus.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      CapturePolicyStatus()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'CapturePolicyStatus',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: CapturePolicyStatus.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'requested')
+    ..aOS(2, _omitFieldNames ? '' : 'actual')
+    ..aOS(3, _omitFieldNames ? '' : 'phase')
+    ..aOS(4, _omitFieldNames ? '' : 'reason')
+    ..aOB(5, _omitFieldNames ? '' : 'pressureForced')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  CapturePolicyStatus clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  CapturePolicyStatus copyWith(void Function(CapturePolicyStatus) updates) =>
+      super.copyWith((message) => updates(message as CapturePolicyStatus))
+          as CapturePolicyStatus;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core
+      .Deprecated('Use CapturePolicyStatus() / CapturePolicyStatus.new instead')
+  static CapturePolicyStatus create() => CapturePolicyStatus._();
+  static $pb.GeneratedMessage $_createMessage() => CapturePolicyStatus._();
+  @$core.override
+  CapturePolicyStatus createEmptyInstance() => CapturePolicyStatus._();
+  @$core.pragma('dart2js:noInline')
+  static CapturePolicyStatus getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<CapturePolicyStatus>(
+          CapturePolicyStatus.$_createMessage);
+  static CapturePolicyStatus? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get requested => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set requested($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasRequested() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearRequested() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get actual => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set actual($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasActual() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearActual() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.String get phase => $_getSZ(2);
+  @$pb.TagNumber(3)
+  set phase($core.String value) => $_setString(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasPhase() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearPhase() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.String get reason => $_getSZ(3);
+  @$pb.TagNumber(4)
+  set reason($core.String value) => $_setString(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasReason() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearReason() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $core.bool get pressureForced => $_getBF(4);
+  @$pb.TagNumber(5)
+  set pressureForced($core.bool value) => $_setBool(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasPressureForced() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearPressureForced() => $_clearField(5);
+}
+
+class ObservationSession extends $pb.GeneratedMessage {
+  factory ObservationSession({
+    $core.String? sessionId,
+    $core.bool? active,
+    $fixnum.Int64? continuousActiveMs,
+    $core.String? resetReason,
+  }) {
+    final result = ObservationSession._();
+    if (sessionId != null) result.sessionId = sessionId;
+    if (active != null) result.active = active;
+    if (continuousActiveMs != null)
+      result.continuousActiveMs = continuousActiveMs;
+    if (resetReason != null) result.resetReason = resetReason;
+    return result;
+  }
+
+  ObservationSession._();
+
+  factory ObservationSession.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservationSession()..mergeFromBuffer(data, registry);
+  factory ObservationSession.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservationSession()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ObservationSession',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: ObservationSession.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'sessionId')
+    ..aOB(2, _omitFieldNames ? '' : 'active')
+    ..a<$fixnum.Int64>(
+        3, _omitFieldNames ? '' : 'continuousActiveMs', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..aOS(4, _omitFieldNames ? '' : 'resetReason')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservationSession clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservationSession copyWith(void Function(ObservationSession) updates) =>
+      super.copyWith((message) => updates(message as ObservationSession))
+          as ObservationSession;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use ObservationSession() / ObservationSession.new instead')
+  static ObservationSession create() => ObservationSession._();
+  static $pb.GeneratedMessage $_createMessage() => ObservationSession._();
+  @$core.override
+  ObservationSession createEmptyInstance() => ObservationSession._();
+  @$core.pragma('dart2js:noInline')
+  static ObservationSession getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<ObservationSession>(
+          ObservationSession.$_createMessage);
+  static ObservationSession? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get sessionId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set sessionId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasSessionId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearSessionId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.bool get active => $_getBF(1);
+  @$pb.TagNumber(2)
+  set active($core.bool value) => $_setBool(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasActive() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearActive() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $fixnum.Int64 get continuousActiveMs => $_getI64(2);
+  @$pb.TagNumber(3)
+  set continuousActiveMs($fixnum.Int64 value) => $_setInt64(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasContinuousActiveMs() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearContinuousActiveMs() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.String get resetReason => $_getSZ(3);
+  @$pb.TagNumber(4)
+  set resetReason($core.String value) => $_setString(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasResetReason() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearResetReason() => $_clearField(4);
+}
+
+class HighRiskDeliveryStatus extends $pb.GeneratedMessage {
+  factory HighRiskDeliveryStatus({
+    $core.int? pendingCount,
+    $fixnum.Int64? pendingBytes,
+    $fixnum.Int64? ackedCount,
+    $fixnum.Int64? expiredCount,
+    $fixnum.Int64? overflowEvictedCount,
+    $fixnum.Int64? storageErrorCount,
+    $fixnum.Int64? overflowRejectedCount,
+    $fixnum.Int64? oversizeRejectedCount,
+    $fixnum.Int64? previousBootDiscardedCount,
+    $core.bool? storageAvailable,
+  }) {
+    final result = HighRiskDeliveryStatus._();
+    if (pendingCount != null) result.pendingCount = pendingCount;
+    if (pendingBytes != null) result.pendingBytes = pendingBytes;
+    if (ackedCount != null) result.ackedCount = ackedCount;
+    if (expiredCount != null) result.expiredCount = expiredCount;
+    if (overflowEvictedCount != null)
+      result.overflowEvictedCount = overflowEvictedCount;
+    if (storageErrorCount != null) result.storageErrorCount = storageErrorCount;
+    if (overflowRejectedCount != null)
+      result.overflowRejectedCount = overflowRejectedCount;
+    if (oversizeRejectedCount != null)
+      result.oversizeRejectedCount = oversizeRejectedCount;
+    if (previousBootDiscardedCount != null)
+      result.previousBootDiscardedCount = previousBootDiscardedCount;
+    if (storageAvailable != null) result.storageAvailable = storageAvailable;
+    return result;
+  }
+
+  HighRiskDeliveryStatus._();
+
+  factory HighRiskDeliveryStatus.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      HighRiskDeliveryStatus()..mergeFromBuffer(data, registry);
+  factory HighRiskDeliveryStatus.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      HighRiskDeliveryStatus()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'HighRiskDeliveryStatus',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: HighRiskDeliveryStatus.$_createMessage)
+    ..aI(1, _omitFieldNames ? '' : 'pendingCount',
+        fieldType: $pb.PbFieldType.OU3)
+    ..a<$fixnum.Int64>(
+        2, _omitFieldNames ? '' : 'pendingBytes', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..a<$fixnum.Int64>(
+        3, _omitFieldNames ? '' : 'ackedCount', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..a<$fixnum.Int64>(
+        4, _omitFieldNames ? '' : 'expiredCount', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..a<$fixnum.Int64>(
+        5, _omitFieldNames ? '' : 'overflowEvictedCount', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..a<$fixnum.Int64>(
+        6, _omitFieldNames ? '' : 'storageErrorCount', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..a<$fixnum.Int64>(
+        7, _omitFieldNames ? '' : 'overflowRejectedCount', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..a<$fixnum.Int64>(
+        8, _omitFieldNames ? '' : 'oversizeRejectedCount', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..a<$fixnum.Int64>(9, _omitFieldNames ? '' : 'previousBootDiscardedCount',
+        $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..aOB(10, _omitFieldNames ? '' : 'storageAvailable')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  HighRiskDeliveryStatus clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  HighRiskDeliveryStatus copyWith(
+          void Function(HighRiskDeliveryStatus) updates) =>
+      super.copyWith((message) => updates(message as HighRiskDeliveryStatus))
+          as HighRiskDeliveryStatus;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated(
+      'Use HighRiskDeliveryStatus() / HighRiskDeliveryStatus.new instead')
+  static HighRiskDeliveryStatus create() => HighRiskDeliveryStatus._();
+  static $pb.GeneratedMessage $_createMessage() => HighRiskDeliveryStatus._();
+  @$core.override
+  HighRiskDeliveryStatus createEmptyInstance() => HighRiskDeliveryStatus._();
+  @$core.pragma('dart2js:noInline')
+  static HighRiskDeliveryStatus getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<HighRiskDeliveryStatus>(
+          HighRiskDeliveryStatus.$_createMessage);
+  static HighRiskDeliveryStatus? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.int get pendingCount => $_getIZ(0);
+  @$pb.TagNumber(1)
+  set pendingCount($core.int value) => $_setUnsignedInt32(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPendingCount() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPendingCount() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $fixnum.Int64 get pendingBytes => $_getI64(1);
+  @$pb.TagNumber(2)
+  set pendingBytes($fixnum.Int64 value) => $_setInt64(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasPendingBytes() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearPendingBytes() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $fixnum.Int64 get ackedCount => $_getI64(2);
+  @$pb.TagNumber(3)
+  set ackedCount($fixnum.Int64 value) => $_setInt64(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasAckedCount() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearAckedCount() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $fixnum.Int64 get expiredCount => $_getI64(3);
+  @$pb.TagNumber(4)
+  set expiredCount($fixnum.Int64 value) => $_setInt64(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasExpiredCount() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearExpiredCount() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $fixnum.Int64 get overflowEvictedCount => $_getI64(4);
+  @$pb.TagNumber(5)
+  set overflowEvictedCount($fixnum.Int64 value) => $_setInt64(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasOverflowEvictedCount() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearOverflowEvictedCount() => $_clearField(5);
+
+  @$pb.TagNumber(6)
+  $fixnum.Int64 get storageErrorCount => $_getI64(5);
+  @$pb.TagNumber(6)
+  set storageErrorCount($fixnum.Int64 value) => $_setInt64(5, value);
+  @$pb.TagNumber(6)
+  $core.bool hasStorageErrorCount() => $_has(5);
+  @$pb.TagNumber(6)
+  void clearStorageErrorCount() => $_clearField(6);
+
+  @$pb.TagNumber(7)
+  $fixnum.Int64 get overflowRejectedCount => $_getI64(6);
+  @$pb.TagNumber(7)
+  set overflowRejectedCount($fixnum.Int64 value) => $_setInt64(6, value);
+  @$pb.TagNumber(7)
+  $core.bool hasOverflowRejectedCount() => $_has(6);
+  @$pb.TagNumber(7)
+  void clearOverflowRejectedCount() => $_clearField(7);
+
+  @$pb.TagNumber(8)
+  $fixnum.Int64 get oversizeRejectedCount => $_getI64(7);
+  @$pb.TagNumber(8)
+  set oversizeRejectedCount($fixnum.Int64 value) => $_setInt64(7, value);
+  @$pb.TagNumber(8)
+  $core.bool hasOversizeRejectedCount() => $_has(7);
+  @$pb.TagNumber(8)
+  void clearOversizeRejectedCount() => $_clearField(8);
+
+  @$pb.TagNumber(9)
+  $fixnum.Int64 get previousBootDiscardedCount => $_getI64(8);
+  @$pb.TagNumber(9)
+  set previousBootDiscardedCount($fixnum.Int64 value) => $_setInt64(8, value);
+  @$pb.TagNumber(9)
+  $core.bool hasPreviousBootDiscardedCount() => $_has(8);
+  @$pb.TagNumber(9)
+  void clearPreviousBootDiscardedCount() => $_clearField(9);
+
+  @$pb.TagNumber(10)
+  $core.bool get storageAvailable => $_getBF(9);
+  @$pb.TagNumber(10)
+  set storageAvailable($core.bool value) => $_setBool(9, value);
+  @$pb.TagNumber(10)
+  $core.bool hasStorageAvailable() => $_has(9);
+  @$pb.TagNumber(10)
+  void clearStorageAvailable() => $_clearField(10);
+}
+
+class ResourcePressureStatus extends $pb.GeneratedMessage {
+  factory ResourcePressureStatus({
+    ResourceLevel? level,
+    $core.String? reason,
+  }) {
+    final result = ResourcePressureStatus._();
+    if (level != null) result.level = level;
+    if (reason != null) result.reason = reason;
+    return result;
+  }
+
+  ResourcePressureStatus._();
+
+  factory ResourcePressureStatus.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ResourcePressureStatus()..mergeFromBuffer(data, registry);
+  factory ResourcePressureStatus.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ResourcePressureStatus()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ResourcePressureStatus',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: ResourcePressureStatus.$_createMessage)
+    ..aE<ResourceLevel>(1, _omitFieldNames ? '' : 'level',
+        enumValues: ResourceLevel.values)
+    ..aOS(2, _omitFieldNames ? '' : 'reason')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ResourcePressureStatus clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ResourcePressureStatus copyWith(
+          void Function(ResourcePressureStatus) updates) =>
+      super.copyWith((message) => updates(message as ResourcePressureStatus))
+          as ResourcePressureStatus;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated(
+      'Use ResourcePressureStatus() / ResourcePressureStatus.new instead')
+  static ResourcePressureStatus create() => ResourcePressureStatus._();
+  static $pb.GeneratedMessage $_createMessage() => ResourcePressureStatus._();
+  @$core.override
+  ResourcePressureStatus createEmptyInstance() => ResourcePressureStatus._();
+  @$core.pragma('dart2js:noInline')
+  static ResourcePressureStatus getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<ResourcePressureStatus>(
+          ResourcePressureStatus.$_createMessage);
+  static ResourcePressureStatus? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  ResourceLevel get level => $_getN(0);
+  @$pb.TagNumber(1)
+  set level(ResourceLevel value) => $_setField(1, value);
+  @$pb.TagNumber(1)
+  $core.bool hasLevel() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearLevel() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get reason => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set reason($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasReason() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearReason() => $_clearField(2);
+}
+
+class ComponentHealth extends $pb.GeneratedMessage {
+  factory ComponentHealth({
+    ComponentId? componentId,
+    ComponentState? state,
+    $core.String? reason,
+    $fixnum.Int64? lastOkMs,
+    $fixnum.Int64? sampledAtMs,
+    $core.String? recoveryPhase,
+  }) {
+    final result = ComponentHealth._();
+    if (componentId != null) result.componentId = componentId;
+    if (state != null) result.state = state;
+    if (reason != null) result.reason = reason;
+    if (lastOkMs != null) result.lastOkMs = lastOkMs;
+    if (sampledAtMs != null) result.sampledAtMs = sampledAtMs;
+    if (recoveryPhase != null) result.recoveryPhase = recoveryPhase;
+    return result;
+  }
+
+  ComponentHealth._();
+
+  factory ComponentHealth.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ComponentHealth()..mergeFromBuffer(data, registry);
+  factory ComponentHealth.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ComponentHealth()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ComponentHealth',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: ComponentHealth.$_createMessage)
+    ..aE<ComponentId>(1, _omitFieldNames ? '' : 'componentId',
+        enumValues: ComponentId.values)
+    ..aE<ComponentState>(2, _omitFieldNames ? '' : 'state',
+        enumValues: ComponentState.values)
+    ..aOS(3, _omitFieldNames ? '' : 'reason')
+    ..aInt64(4, _omitFieldNames ? '' : 'lastOkMs')
+    ..aInt64(5, _omitFieldNames ? '' : 'sampledAtMs')
+    ..aOS(6, _omitFieldNames ? '' : 'recoveryPhase')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ComponentHealth clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ComponentHealth copyWith(void Function(ComponentHealth) updates) =>
+      super.copyWith((message) => updates(message as ComponentHealth))
+          as ComponentHealth;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use ComponentHealth() / ComponentHealth.new instead')
+  static ComponentHealth create() => ComponentHealth._();
+  static $pb.GeneratedMessage $_createMessage() => ComponentHealth._();
+  @$core.override
+  ComponentHealth createEmptyInstance() => ComponentHealth._();
+  @$core.pragma('dart2js:noInline')
+  static ComponentHealth getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<ComponentHealth>(
+          ComponentHealth.$_createMessage);
+  static ComponentHealth? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  ComponentId get componentId => $_getN(0);
+  @$pb.TagNumber(1)
+  set componentId(ComponentId value) => $_setField(1, value);
+  @$pb.TagNumber(1)
+  $core.bool hasComponentId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearComponentId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  ComponentState get state => $_getN(1);
+  @$pb.TagNumber(2)
+  set state(ComponentState value) => $_setField(2, value);
+  @$pb.TagNumber(2)
+  $core.bool hasState() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearState() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.String get reason => $_getSZ(2);
+  @$pb.TagNumber(3)
+  set reason($core.String value) => $_setString(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasReason() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearReason() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $fixnum.Int64 get lastOkMs => $_getI64(3);
+  @$pb.TagNumber(4)
+  set lastOkMs($fixnum.Int64 value) => $_setInt64(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasLastOkMs() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearLastOkMs() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $fixnum.Int64 get sampledAtMs => $_getI64(4);
+  @$pb.TagNumber(5)
+  set sampledAtMs($fixnum.Int64 value) => $_setInt64(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasSampledAtMs() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearSampledAtMs() => $_clearField(5);
+
+  @$pb.TagNumber(6)
+  $core.String get recoveryPhase => $_getSZ(5);
+  @$pb.TagNumber(6)
+  set recoveryPhase($core.String value) => $_setString(5, value);
+  @$pb.TagNumber(6)
+  $core.bool hasRecoveryPhase() => $_has(5);
+  @$pb.TagNumber(6)
+  void clearRecoveryPhase() => $_clearField(6);
+}
+
+class DeviceHealth extends $pb.GeneratedMessage {
+  factory DeviceHealth({
+    $core.Iterable<ComponentHealth>? components,
+  }) {
+    final result = DeviceHealth._();
+    if (components != null) result.components.addAll(components);
+    return result;
+  }
+
+  DeviceHealth._();
+
+  factory DeviceHealth.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      DeviceHealth()..mergeFromBuffer(data, registry);
+  factory DeviceHealth.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      DeviceHealth()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'DeviceHealth',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: DeviceHealth.$_createMessage)
+    ..pPM<ComponentHealth>(1, _omitFieldNames ? '' : 'components',
+        subBuilder: ComponentHealth.$_createMessage)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  DeviceHealth clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  DeviceHealth copyWith(void Function(DeviceHealth) updates) =>
+      super.copyWith((message) => updates(message as DeviceHealth))
+          as DeviceHealth;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use DeviceHealth() / DeviceHealth.new instead')
+  static DeviceHealth create() => DeviceHealth._();
+  static $pb.GeneratedMessage $_createMessage() => DeviceHealth._();
+  @$core.override
+  DeviceHealth createEmptyInstance() => DeviceHealth._();
+  @$core.pragma('dart2js:noInline')
+  static DeviceHealth getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<DeviceHealth>(
+          DeviceHealth.$_createMessage);
+  static DeviceHealth? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $pb.PbList<ComponentHealth> get components => $_getList(0);
+}
+
+class ObservedDevice extends $pb.GeneratedMessage {
+  factory ObservedDevice({
+    $core.String? deviceKey,
+    $core.String? mac,
+    ObservedDeviceKind? kind,
+    $core.String? ssid,
+    $core.String? bssid,
+    $core.String? channel,
+    $core.double? rssiDbm,
+    $fixnum.Int64? firstSeenMs,
+    $fixnum.Int64? lastSeenMs,
+    AssociationState? associationState,
+    $core.String? relatedApBssid,
+    $core.String? sourceScope,
+    $core.String? security,
+  }) {
+    final result = ObservedDevice._();
+    if (deviceKey != null) result.deviceKey = deviceKey;
+    if (mac != null) result.mac = mac;
+    if (kind != null) result.kind = kind;
+    if (ssid != null) result.ssid = ssid;
+    if (bssid != null) result.bssid = bssid;
+    if (channel != null) result.channel = channel;
+    if (rssiDbm != null) result.rssiDbm = rssiDbm;
+    if (firstSeenMs != null) result.firstSeenMs = firstSeenMs;
+    if (lastSeenMs != null) result.lastSeenMs = lastSeenMs;
+    if (associationState != null) result.associationState = associationState;
+    if (relatedApBssid != null) result.relatedApBssid = relatedApBssid;
+    if (sourceScope != null) result.sourceScope = sourceScope;
+    if (security != null) result.security = security;
+    return result;
+  }
+
+  ObservedDevice._();
+
+  factory ObservedDevice.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservedDevice()..mergeFromBuffer(data, registry);
+  factory ObservedDevice.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservedDevice()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ObservedDevice',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: ObservedDevice.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'deviceKey')
+    ..aOS(2, _omitFieldNames ? '' : 'mac')
+    ..aE<ObservedDeviceKind>(3, _omitFieldNames ? '' : 'kind',
+        enumValues: ObservedDeviceKind.values)
+    ..aOS(4, _omitFieldNames ? '' : 'ssid')
+    ..aOS(5, _omitFieldNames ? '' : 'bssid')
+    ..aOS(6, _omitFieldNames ? '' : 'channel')
+    ..aD(7, _omitFieldNames ? '' : 'rssiDbm', fieldType: $pb.PbFieldType.OF)
+    ..aInt64(8, _omitFieldNames ? '' : 'firstSeenMs')
+    ..aInt64(9, _omitFieldNames ? '' : 'lastSeenMs')
+    ..aE<AssociationState>(10, _omitFieldNames ? '' : 'associationState',
+        enumValues: AssociationState.values)
+    ..aOS(11, _omitFieldNames ? '' : 'relatedApBssid')
+    ..aOS(12, _omitFieldNames ? '' : 'sourceScope')
+    ..aOS(13, _omitFieldNames ? '' : 'security')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservedDevice clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservedDevice copyWith(void Function(ObservedDevice) updates) =>
+      super.copyWith((message) => updates(message as ObservedDevice))
+          as ObservedDevice;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated('Use ObservedDevice() / ObservedDevice.new instead')
+  static ObservedDevice create() => ObservedDevice._();
+  static $pb.GeneratedMessage $_createMessage() => ObservedDevice._();
+  @$core.override
+  ObservedDevice createEmptyInstance() => ObservedDevice._();
+  @$core.pragma('dart2js:noInline')
+  static ObservedDevice getDefault() =>
+      _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<ObservedDevice>(
+          ObservedDevice.$_createMessage);
+  static ObservedDevice? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get deviceKey => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set deviceKey($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasDeviceKey() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearDeviceKey() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get mac => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set mac($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasMac() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearMac() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  ObservedDeviceKind get kind => $_getN(2);
+  @$pb.TagNumber(3)
+  set kind(ObservedDeviceKind value) => $_setField(3, value);
+  @$pb.TagNumber(3)
+  $core.bool hasKind() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearKind() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.String get ssid => $_getSZ(3);
+  @$pb.TagNumber(4)
+  set ssid($core.String value) => $_setString(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasSsid() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearSsid() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $core.String get bssid => $_getSZ(4);
+  @$pb.TagNumber(5)
+  set bssid($core.String value) => $_setString(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasBssid() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearBssid() => $_clearField(5);
+
+  @$pb.TagNumber(6)
+  $core.String get channel => $_getSZ(5);
+  @$pb.TagNumber(6)
+  set channel($core.String value) => $_setString(5, value);
+  @$pb.TagNumber(6)
+  $core.bool hasChannel() => $_has(5);
+  @$pb.TagNumber(6)
+  void clearChannel() => $_clearField(6);
+
+  @$pb.TagNumber(7)
+  $core.double get rssiDbm => $_getN(6);
+  @$pb.TagNumber(7)
+  set rssiDbm($core.double value) => $_setFloat(6, value);
+  @$pb.TagNumber(7)
+  $core.bool hasRssiDbm() => $_has(6);
+  @$pb.TagNumber(7)
+  void clearRssiDbm() => $_clearField(7);
+
+  @$pb.TagNumber(8)
+  $fixnum.Int64 get firstSeenMs => $_getI64(7);
+  @$pb.TagNumber(8)
+  set firstSeenMs($fixnum.Int64 value) => $_setInt64(7, value);
+  @$pb.TagNumber(8)
+  $core.bool hasFirstSeenMs() => $_has(7);
+  @$pb.TagNumber(8)
+  void clearFirstSeenMs() => $_clearField(8);
+
+  @$pb.TagNumber(9)
+  $fixnum.Int64 get lastSeenMs => $_getI64(8);
+  @$pb.TagNumber(9)
+  set lastSeenMs($fixnum.Int64 value) => $_setInt64(8, value);
+  @$pb.TagNumber(9)
+  $core.bool hasLastSeenMs() => $_has(8);
+  @$pb.TagNumber(9)
+  void clearLastSeenMs() => $_clearField(9);
+
+  @$pb.TagNumber(10)
+  AssociationState get associationState => $_getN(9);
+  @$pb.TagNumber(10)
+  set associationState(AssociationState value) => $_setField(10, value);
+  @$pb.TagNumber(10)
+  $core.bool hasAssociationState() => $_has(9);
+  @$pb.TagNumber(10)
+  void clearAssociationState() => $_clearField(10);
+
+  @$pb.TagNumber(11)
+  $core.String get relatedApBssid => $_getSZ(10);
+  @$pb.TagNumber(11)
+  set relatedApBssid($core.String value) => $_setString(10, value);
+  @$pb.TagNumber(11)
+  $core.bool hasRelatedApBssid() => $_has(10);
+  @$pb.TagNumber(11)
+  void clearRelatedApBssid() => $_clearField(11);
+
+  @$pb.TagNumber(12)
+  $core.String get sourceScope => $_getSZ(11);
+  @$pb.TagNumber(12)
+  set sourceScope($core.String value) => $_setString(11, value);
+  @$pb.TagNumber(12)
+  $core.bool hasSourceScope() => $_has(11);
+  @$pb.TagNumber(12)
+  void clearSourceScope() => $_clearField(12);
+
+  @$pb.TagNumber(13)
+  $core.String get security => $_getSZ(12);
+  @$pb.TagNumber(13)
+  set security($core.String value) => $_setString(12, value);
+  @$pb.TagNumber(13)
+  $core.bool hasSecurity() => $_has(12);
+  @$pb.TagNumber(13)
+  void clearSecurity() => $_clearField(13);
+}
+
+class ObservedDevicesRequest extends $pb.GeneratedMessage {
+  factory ObservedDevicesRequest({
+    $core.String? phoneId,
+    $core.String? pageToken,
+    $core.int? pageSize,
+    $core.String? ssidFilter,
+    $core.String? bssidFilter,
+    ObservedDeviceKind? kind,
+  }) {
+    final result = ObservedDevicesRequest._();
+    if (phoneId != null) result.phoneId = phoneId;
+    if (pageToken != null) result.pageToken = pageToken;
+    if (pageSize != null) result.pageSize = pageSize;
+    if (ssidFilter != null) result.ssidFilter = ssidFilter;
+    if (bssidFilter != null) result.bssidFilter = bssidFilter;
+    if (kind != null) result.kind = kind;
+    return result;
+  }
+
+  ObservedDevicesRequest._();
+
+  factory ObservedDevicesRequest.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservedDevicesRequest()..mergeFromBuffer(data, registry);
+  factory ObservedDevicesRequest.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservedDevicesRequest()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ObservedDevicesRequest',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: ObservedDevicesRequest.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'phoneId')
+    ..aOS(2, _omitFieldNames ? '' : 'pageToken')
+    ..aI(3, _omitFieldNames ? '' : 'pageSize', fieldType: $pb.PbFieldType.OU3)
+    ..aOS(4, _omitFieldNames ? '' : 'ssidFilter')
+    ..aOS(5, _omitFieldNames ? '' : 'bssidFilter')
+    ..aE<ObservedDeviceKind>(6, _omitFieldNames ? '' : 'kind',
+        enumValues: ObservedDeviceKind.values)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservedDevicesRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservedDevicesRequest copyWith(
+          void Function(ObservedDevicesRequest) updates) =>
+      super.copyWith((message) => updates(message as ObservedDevicesRequest))
+          as ObservedDevicesRequest;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated(
+      'Use ObservedDevicesRequest() / ObservedDevicesRequest.new instead')
+  static ObservedDevicesRequest create() => ObservedDevicesRequest._();
+  static $pb.GeneratedMessage $_createMessage() => ObservedDevicesRequest._();
+  @$core.override
+  ObservedDevicesRequest createEmptyInstance() => ObservedDevicesRequest._();
+  @$core.pragma('dart2js:noInline')
+  static ObservedDevicesRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<ObservedDevicesRequest>(
+          ObservedDevicesRequest.$_createMessage);
+  static ObservedDevicesRequest? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get phoneId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set phoneId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPhoneId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPhoneId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get pageToken => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set pageToken($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasPageToken() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearPageToken() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.int get pageSize => $_getIZ(2);
+  @$pb.TagNumber(3)
+  set pageSize($core.int value) => $_setUnsignedInt32(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasPageSize() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearPageSize() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.String get ssidFilter => $_getSZ(3);
+  @$pb.TagNumber(4)
+  set ssidFilter($core.String value) => $_setString(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasSsidFilter() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearSsidFilter() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $core.String get bssidFilter => $_getSZ(4);
+  @$pb.TagNumber(5)
+  set bssidFilter($core.String value) => $_setString(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasBssidFilter() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearBssidFilter() => $_clearField(5);
+
+  @$pb.TagNumber(6)
+  ObservedDeviceKind get kind => $_getN(5);
+  @$pb.TagNumber(6)
+  set kind(ObservedDeviceKind value) => $_setField(6, value);
+  @$pb.TagNumber(6)
+  $core.bool hasKind() => $_has(5);
+  @$pb.TagNumber(6)
+  void clearKind() => $_clearField(6);
+}
+
+class ObservedDevicesPage extends $pb.GeneratedMessage {
+  factory ObservedDevicesPage({
+    $core.Iterable<ObservedDevice>? devices,
+    $core.String? nextPageToken,
+    $fixnum.Int64? generation,
+    $core.bool? truncated,
+    $fixnum.Int64? sampledAtMs,
+    $core.String? coverage,
+    $core.int? totalCount,
+  }) {
+    final result = ObservedDevicesPage._();
+    if (devices != null) result.devices.addAll(devices);
+    if (nextPageToken != null) result.nextPageToken = nextPageToken;
+    if (generation != null) result.generation = generation;
+    if (truncated != null) result.truncated = truncated;
+    if (sampledAtMs != null) result.sampledAtMs = sampledAtMs;
+    if (coverage != null) result.coverage = coverage;
+    if (totalCount != null) result.totalCount = totalCount;
+    return result;
+  }
+
+  ObservedDevicesPage._();
+
+  factory ObservedDevicesPage.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservedDevicesPage()..mergeFromBuffer(data, registry);
+  factory ObservedDevicesPage.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ObservedDevicesPage()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ObservedDevicesPage',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: ObservedDevicesPage.$_createMessage)
+    ..pPM<ObservedDevice>(1, _omitFieldNames ? '' : 'devices',
+        subBuilder: ObservedDevice.$_createMessage)
+    ..aOS(2, _omitFieldNames ? '' : 'nextPageToken')
+    ..a<$fixnum.Int64>(
+        3, _omitFieldNames ? '' : 'generation', $pb.PbFieldType.OU6,
+        defaultOrMaker: $fixnum.Int64.ZERO)
+    ..aOB(4, _omitFieldNames ? '' : 'truncated')
+    ..aInt64(5, _omitFieldNames ? '' : 'sampledAtMs')
+    ..aOS(6, _omitFieldNames ? '' : 'coverage')
+    ..aI(7, _omitFieldNames ? '' : 'totalCount', fieldType: $pb.PbFieldType.OU3)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservedDevicesPage clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ObservedDevicesPage copyWith(void Function(ObservedDevicesPage) updates) =>
+      super.copyWith((message) => updates(message as ObservedDevicesPage))
+          as ObservedDevicesPage;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core
+      .Deprecated('Use ObservedDevicesPage() / ObservedDevicesPage.new instead')
+  static ObservedDevicesPage create() => ObservedDevicesPage._();
+  static $pb.GeneratedMessage $_createMessage() => ObservedDevicesPage._();
+  @$core.override
+  ObservedDevicesPage createEmptyInstance() => ObservedDevicesPage._();
+  @$core.pragma('dart2js:noInline')
+  static ObservedDevicesPage getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<ObservedDevicesPage>(
+          ObservedDevicesPage.$_createMessage);
+  static ObservedDevicesPage? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $pb.PbList<ObservedDevice> get devices => $_getList(0);
+
+  @$pb.TagNumber(2)
+  $core.String get nextPageToken => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set nextPageToken($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasNextPageToken() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearNextPageToken() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $fixnum.Int64 get generation => $_getI64(2);
+  @$pb.TagNumber(3)
+  set generation($fixnum.Int64 value) => $_setInt64(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasGeneration() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearGeneration() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.bool get truncated => $_getBF(3);
+  @$pb.TagNumber(4)
+  set truncated($core.bool value) => $_setBool(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasTruncated() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearTruncated() => $_clearField(4);
+
+  @$pb.TagNumber(5)
+  $fixnum.Int64 get sampledAtMs => $_getI64(4);
+  @$pb.TagNumber(5)
+  set sampledAtMs($fixnum.Int64 value) => $_setInt64(4, value);
+  @$pb.TagNumber(5)
+  $core.bool hasSampledAtMs() => $_has(4);
+  @$pb.TagNumber(5)
+  void clearSampledAtMs() => $_clearField(5);
+
+  @$pb.TagNumber(6)
+  $core.String get coverage => $_getSZ(5);
+  @$pb.TagNumber(6)
+  set coverage($core.String value) => $_setString(5, value);
+  @$pb.TagNumber(6)
+  $core.bool hasCoverage() => $_has(5);
+  @$pb.TagNumber(6)
+  void clearCoverage() => $_clearField(6);
+
+  @$pb.TagNumber(7)
+  $core.int get totalCount => $_getIZ(6);
+  @$pb.TagNumber(7)
+  set totalCount($core.int value) => $_setUnsignedInt32(6, value);
+  @$pb.TagNumber(7)
+  $core.bool hasTotalCount() => $_has(6);
+  @$pb.TagNumber(7)
+  void clearTotalCount() => $_clearField(7);
+}
+
+class SetCaptureProfileRequest extends $pb.GeneratedMessage {
+  factory SetCaptureProfileRequest({
+    $core.String? phoneId,
+    $core.String? requestId,
+    CaptureProfile? targetProfile,
+  }) {
+    final result = SetCaptureProfileRequest._();
+    if (phoneId != null) result.phoneId = phoneId;
+    if (requestId != null) result.requestId = requestId;
+    if (targetProfile != null) result.targetProfile = targetProfile;
+    return result;
+  }
+
+  SetCaptureProfileRequest._();
+
+  factory SetCaptureProfileRequest.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      SetCaptureProfileRequest()..mergeFromBuffer(data, registry);
+  factory SetCaptureProfileRequest.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      SetCaptureProfileRequest()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'SetCaptureProfileRequest',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: SetCaptureProfileRequest.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'phoneId')
+    ..aOS(2, _omitFieldNames ? '' : 'requestId')
+    ..aE<CaptureProfile>(3, _omitFieldNames ? '' : 'targetProfile',
+        enumValues: CaptureProfile.values)
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  SetCaptureProfileRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  SetCaptureProfileRequest copyWith(
+          void Function(SetCaptureProfileRequest) updates) =>
+      super.copyWith((message) => updates(message as SetCaptureProfileRequest))
+          as SetCaptureProfileRequest;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated(
+      'Use SetCaptureProfileRequest() / SetCaptureProfileRequest.new instead')
+  static SetCaptureProfileRequest create() => SetCaptureProfileRequest._();
+  static $pb.GeneratedMessage $_createMessage() => SetCaptureProfileRequest._();
+  @$core.override
+  SetCaptureProfileRequest createEmptyInstance() =>
+      SetCaptureProfileRequest._();
+  @$core.pragma('dart2js:noInline')
+  static SetCaptureProfileRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<SetCaptureProfileRequest>(
+          SetCaptureProfileRequest.$_createMessage);
+  static SetCaptureProfileRequest? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get phoneId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set phoneId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPhoneId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPhoneId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get requestId => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set requestId($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasRequestId() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearRequestId() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  CaptureProfile get targetProfile => $_getN(2);
+  @$pb.TagNumber(3)
+  set targetProfile(CaptureProfile value) => $_setField(3, value);
+  @$pb.TagNumber(3)
+  $core.bool hasTargetProfile() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearTargetProfile() => $_clearField(3);
+}
+
+class RecoverComponentRequest extends $pb.GeneratedMessage {
+  factory RecoverComponentRequest({
+    $core.String? phoneId,
+    $core.String? requestId,
+    ComponentId? component,
+    $core.bool? allowHotspotRestart,
+  }) {
+    final result = RecoverComponentRequest._();
+    if (phoneId != null) result.phoneId = phoneId;
+    if (requestId != null) result.requestId = requestId;
+    if (component != null) result.component = component;
+    if (allowHotspotRestart != null)
+      result.allowHotspotRestart = allowHotspotRestart;
+    return result;
+  }
+
+  RecoverComponentRequest._();
+
+  factory RecoverComponentRequest.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      RecoverComponentRequest()..mergeFromBuffer(data, registry);
+  factory RecoverComponentRequest.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      RecoverComponentRequest()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'RecoverComponentRequest',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: RecoverComponentRequest.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'phoneId')
+    ..aOS(2, _omitFieldNames ? '' : 'requestId')
+    ..aE<ComponentId>(3, _omitFieldNames ? '' : 'component',
+        enumValues: ComponentId.values)
+    ..aOB(4, _omitFieldNames ? '' : 'allowHotspotRestart')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  RecoverComponentRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  RecoverComponentRequest copyWith(
+          void Function(RecoverComponentRequest) updates) =>
+      super.copyWith((message) => updates(message as RecoverComponentRequest))
+          as RecoverComponentRequest;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated(
+      'Use RecoverComponentRequest() / RecoverComponentRequest.new instead')
+  static RecoverComponentRequest create() => RecoverComponentRequest._();
+  static $pb.GeneratedMessage $_createMessage() => RecoverComponentRequest._();
+  @$core.override
+  RecoverComponentRequest createEmptyInstance() => RecoverComponentRequest._();
+  @$core.pragma('dart2js:noInline')
+  static RecoverComponentRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<RecoverComponentRequest>(
+          RecoverComponentRequest.$_createMessage);
+  static RecoverComponentRequest? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get phoneId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set phoneId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPhoneId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPhoneId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get requestId => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set requestId($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasRequestId() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearRequestId() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  ComponentId get component => $_getN(2);
+  @$pb.TagNumber(3)
+  set component(ComponentId value) => $_setField(3, value);
+  @$pb.TagNumber(3)
+  $core.bool hasComponent() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearComponent() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.bool get allowHotspotRestart => $_getBF(3);
+  @$pb.TagNumber(4)
+  set allowHotspotRestart($core.bool value) => $_setBool(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasAllowHotspotRestart() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearAllowHotspotRestart() => $_clearField(4);
+}
+
+class ControlCommandResponse extends $pb.GeneratedMessage {
+  factory ControlCommandResponse({
+    $core.String? requestId,
+    $core.bool? accepted,
+    CommandStatus? status,
+    $core.String? reason,
+  }) {
+    final result = ControlCommandResponse._();
+    if (requestId != null) result.requestId = requestId;
+    if (accepted != null) result.accepted = accepted;
+    if (status != null) result.status = status;
+    if (reason != null) result.reason = reason;
+    return result;
+  }
+
+  ControlCommandResponse._();
+
+  factory ControlCommandResponse.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ControlCommandResponse()..mergeFromBuffer(data, registry);
+  factory ControlCommandResponse.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      ControlCommandResponse()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'ControlCommandResponse',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: ControlCommandResponse.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'requestId')
+    ..aOB(2, _omitFieldNames ? '' : 'accepted')
+    ..aE<CommandStatus>(3, _omitFieldNames ? '' : 'status',
+        enumValues: CommandStatus.values)
+    ..aOS(4, _omitFieldNames ? '' : 'reason')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ControlCommandResponse clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  ControlCommandResponse copyWith(
+          void Function(ControlCommandResponse) updates) =>
+      super.copyWith((message) => updates(message as ControlCommandResponse))
+          as ControlCommandResponse;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated(
+      'Use ControlCommandResponse() / ControlCommandResponse.new instead')
+  static ControlCommandResponse create() => ControlCommandResponse._();
+  static $pb.GeneratedMessage $_createMessage() => ControlCommandResponse._();
+  @$core.override
+  ControlCommandResponse createEmptyInstance() => ControlCommandResponse._();
+  @$core.pragma('dart2js:noInline')
+  static ControlCommandResponse getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<ControlCommandResponse>(
+          ControlCommandResponse.$_createMessage);
+  static ControlCommandResponse? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get requestId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set requestId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasRequestId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearRequestId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.bool get accepted => $_getBF(1);
+  @$pb.TagNumber(2)
+  set accepted($core.bool value) => $_setBool(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasAccepted() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearAccepted() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  CommandStatus get status => $_getN(2);
+  @$pb.TagNumber(3)
+  set status(CommandStatus value) => $_setField(3, value);
+  @$pb.TagNumber(3)
+  $core.bool hasStatus() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearStatus() => $_clearField(3);
+
+  @$pb.TagNumber(4)
+  $core.String get reason => $_getSZ(3);
+  @$pb.TagNumber(4)
+  set reason($core.String value) => $_setString(3, value);
+  @$pb.TagNumber(4)
+  $core.bool hasReason() => $_has(3);
+  @$pb.TagNumber(4)
+  void clearReason() => $_clearField(4);
 }
 
 const $core.bool _omitFieldNames =

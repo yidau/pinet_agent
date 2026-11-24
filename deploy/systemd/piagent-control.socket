@@ -1,0 +1,13 @@
+[Unit]
+Description=PocketNet local recovery socket
+
+[Socket]
+ListenStream=/run/pocketnet-control/control.sock
+SocketMode=0660
+SocketGroup=piagent-control
+DirectoryMode=0755
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target

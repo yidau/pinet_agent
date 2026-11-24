@@ -65,7 +65,7 @@ if [[ "$libraries" == *'not found'* ]]; then
 fi
 
 install -d -- "$work/payload/raspberry"
-for component in config enrollment time_sync wireless; do
+for component in config control enrollment time_sync wireless; do
     cp -a -- "$source_dir/raspberry/$component" "$work/payload/raspberry/"
 done
 find "$work/payload" -type d -name __pycache__ -prune -exec rm -rf -- {} +
@@ -75,6 +75,9 @@ install -m 0644 -- "$source_dir/deploy/systemd/piagent-ble-time-sync.conf" "$wor
 install -m 0644 -- "$source_dir/deploy/systemd/piagent-telemetry.conf" "$work/payload/raspberry/config/runtime/"
 for unit in piagent-hotspot.service piagent-dhcp.service; do
     install -m 0644 -- "$source_dir/deploy/systemd/$unit" "$work/payload/raspberry/config/runtime/"
+done
+for file in piagent-control.socket piagent-control@.service piagent-control.sysusers.conf; do
+    install -m 0644 -- "$source_dir/deploy/systemd/$file" "$work/payload/raspberry/config/runtime/"
 done
 install -m 0644 -- "$source_dir/raspberry/config/runtime/zramswap" "$work/payload/raspberry/config/runtime/"
 

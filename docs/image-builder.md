@@ -36,7 +36,7 @@
 
     sudo /opt/pocketnet/deploy/install-release.sh --sha256 <SHA-256> ~/<更新包>
 
-更新器保留设备身份、手机注册、TLS 和 Kismet 凭据。升级失败时回退软件链接和修改过的系统配置。树莓派事件缓冲在 RAM，历史以手机 SQLite 为准。已有版本留下的事件文件保留供回退，RAM-first 服务不再打开它们。完整镜像适用于新卡或重新初始化。
+更新器保留设备身份、手机注册、TLS 和 Kismet 凭据。升级失败时回退软件链接和修改过的系统配置。V2 保留普通事件 RAM 缓冲，并新增唯一持久业务目录 `pocketnet-highrisk` 作为高危待确认队列。详情及回滚步骤见 [V2 监控与验收](v2-monitoring.md)。完整镜像适用于新卡或重新初始化。
 
 ### 热点启动与 USB 恢复修复
 
@@ -55,7 +55,7 @@ journalctl -b -u piagent-hotspot.service -u pocketnet-firstboot.service -o short
 
 本轮源码修补的离线记录：Debian 13 x86_64、Python 3.12 环境执行 `python -m unittest discover -s tests -v`，43 项通过；23 个 Python 文件语法、11 个 shell 脚本语法和 `git diff --check` 通过。测试包含注册额度、热点凭据保持、身份初始化失败后的启动顺序、配置回滚及 USB 恢复夹具。这不是 Ubuntu 22.04 WSL/ARM64 交付验收；本环境没有匹配的 ARM64 chroot，尚未生成本修复的 ARM64 更新包，也未重新构建镜像或 APK。
 
-镜像和 SSH 升级都安装 32 MiB 的 volatile journald 配置和 64 MiB 的 `/tmp` tmpfs 单元。就地升级后，`/tmp` 在下一次启动时切换。Ubuntu 的 `/run` 与 `/dev/shm` 作为 RAM 运行目录，本次不迁移 `/var/lib` 或添加 swap。真实 SD 卡写入量、网卡和手机通信由实机验收确认。
+镜像和 SSH 升级都安装 32 MiB 的 volatile journald 配置和 64 MiB 的 `/tmp` tmpfs 单元。就地升级后，`/tmp` 在下一次启动时切换。Ubuntu 的 `/run` 与 `/dev/shm` 用作 RAM 运行目录，交换空间使用 zram。真实 SD 卡写入量、网卡和手机通信由实机验收确认。
 
 镜像默认将 `deploy/image/usb-monitor.conf` 写入 `/etc/pocketnet/usb-monitor.conf`，预设为 `wlx90de80fb0e0e 0e8d 7612 1-1.3 mt76x2u`。首次开机前把这块 MT7612U 接到原 USB 端口，系统会尝试绑定为 `pn-wifi0` 并启用监听。网卡缺失或身份不匹配时，首次初始化继续，之后可通过有线 SSH 手动绑定。永久注册二维码生成在 `/root/piagent-enrollment.svg`。
 

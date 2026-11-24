@@ -29,6 +29,12 @@ private:
 struct KismetSample {
     v1::CaptureMetrics capture;
     v1::WirelessSummary wireless;
+    std::vector<v1::ObservedDevice> devices;
+    std::string observation_epoch;
+};
+
+struct KismetAlerts {
+    bool reachable = false;
     std::vector<v1::MonitoringEvent> events;
 };
 
@@ -36,7 +42,8 @@ class KismetCollector {
 public:
     KismetCollector(std::string url, std::string api_key,
                     std::filesystem::path monitor = "/run/piagent-wireless/monitor.json");
-    KismetSample sample();
+    KismetSample sample(bool include_devices = true);
+    KismetAlerts sample_alerts() const;
 
 private:
     std::string url_;

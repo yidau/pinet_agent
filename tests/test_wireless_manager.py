@@ -41,6 +41,20 @@ class WirelessRoleTests(unittest.TestCase):
         with patch.object(radio, "usb_radio", return_value=target):
             return radio.select_radio(CONFIG, self.root, self.hotspot, query)
 
+    def test_profile_requires_matching_definition_and_does_not_reopen_old_definition(self):
+        definition = radio.FIELD + "definition"
+        manager, api, _, _, source = self.running_manager()
+        manager.profile = "balanced"
+        self.assertEqual(manager.check(), ("degraded", "monitor_profile_not_applied", None))
+        api.open_source.assert_not_called()
+        api.close_source.assert_not_called()
+        source[definition] = source[definition].replace("filter_mgmt=true",
+            "filter_mgmt=false,truncate_data=true")
+        self.assertEqual(radio.actual_profile(source), "balanced")
+        self.assertEqual(manager.check(), ("ready", "", UUID))
+        source[definition] += ",truncate_data=false"
+        self.assertIsNone(radio.actual_profile(source))
+
     def running_manager(self, **fields):
         phy = self.root / "radios" / "phy2"
         phy.mkdir(parents=True)

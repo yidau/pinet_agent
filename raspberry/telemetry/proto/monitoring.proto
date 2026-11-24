@@ -4,6 +4,10 @@ package pocketnet.v1;
 
 service TelemetryService {
   rpc Subscribe(SubscribeRequest) returns (stream TelemetryMessage);
+  rpc AckHighRisk(AckHighRiskRequest) returns (AckHighRiskResponse);
+  rpc GetObservedDevices(ObservedDevicesRequest) returns (ObservedDevicesPage);
+  rpc SetCaptureProfile(SetCaptureProfileRequest) returns (ControlCommandResponse);
+  rpc RecoverComponent(RecoverComponentRequest) returns (ControlCommandResponse);
 }
 
 message SubscribeRequest {
@@ -11,6 +15,7 @@ message SubscribeRequest {
   optional uint64 last_event_sequence = 2;
   // Replay epoch received in boot_id, opaque to clients.
   optional string last_boot_id = 3;
+  optional bool accepts_high_risk = 4;
 }
 
 message TelemetryMessage {
@@ -18,6 +23,7 @@ message TelemetryMessage {
     MonitoringSnapshot snapshot = 1;
     MonitoringEvent event = 2;
     HistoryGap history_gap = 3;
+    HighRiskEnvelope high_risk = 4;
   }
 }
 
@@ -38,6 +44,14 @@ message MonitoringSnapshot {
   optional uint32 schema_version = 7;
   optional uint64 latest_event_sequence = 8;
   optional DeliveryMetrics delivery = 9;
+  optional DeviceHealth device_health = 10;
+  optional CapturePolicyStatus capture_policy = 11;
+  optional ObservationSession observation_session = 12;
+  optional HighRiskDeliveryStatus high_risk_delivery = 13;
+  optional uint32 capability_version = 14;
+  repeated string supported_features = 15;
+  optional string device_boot_id = 16;
+  optional ResourcePressureStatus resource_pressure = 17;
 }
 
 message SystemMetrics {
@@ -127,10 +141,208 @@ message MonitoringEvent {
   optional string description = 9;
   optional string evidence_id = 10;
   optional uint32 occurrences = 11;
+  optional EventCategory event_category = 12;
+  optional RiskClass risk_class = 13;
+  optional Confidence confidence = 14;
+  optional string source_scope = 15;
+  optional string summary = 16;
+  optional int64 observed_at_ms = 17;
 }
 
 message DeliveryMetrics {
   optional uint64 dropped_events = 1;
   optional uint64 merged_events = 2;
   optional uint32 pending_events = 3;
+}
+
+enum EventCategory {
+  EVENT_CATEGORY_UNSPECIFIED = 0;
+  SECURITY = 1;
+  DEVICE_HEALTH = 2;
+  OBSERVATION = 3;
+  DATA_QUALITY = 4;
+}
+
+enum RiskClass {
+  RISK_UNSPECIFIED = 0;
+  INFO = 1;
+  SUSPICIOUS = 2;
+  HIGH = 3;
+  CRITICAL = 4;
+}
+
+enum Confidence {
+  CONFIDENCE_UNSPECIFIED = 0;
+  LIMITED = 1;
+  CORROBORATED = 2;
+}
+
+message HighRiskEnvelope {
+  optional string durable_id = 1;
+  optional MonitoringEvent event = 2;
+  optional uint32 ttl_seconds = 3;
+  optional int64 enqueued_wall_ms = 4;
+}
+
+message AckHighRiskRequest {
+  optional string phone_id = 1;
+  optional string durable_id = 2;
+}
+
+message AckHighRiskResponse {
+  optional string result = 1;
+}
+
+enum CaptureProfile {
+  CAPTURE_PROFILE_UNSPECIFIED = 0;
+  LIGHT = 1;
+  BALANCED = 2;
+  EXTENDED = 3;
+}
+
+message CapturePolicyStatus {
+  optional string requested = 1;
+  optional string actual = 2;
+  optional string phase = 3;
+  optional string reason = 4;
+  optional bool pressure_forced = 5;
+}
+
+message ObservationSession {
+  optional string session_id = 1;
+  optional bool active = 2;
+  optional uint64 continuous_active_ms = 3;
+  optional string reset_reason = 4;
+}
+
+message HighRiskDeliveryStatus {
+  optional uint32 pending_count = 1;
+  optional uint64 pending_bytes = 2;
+  optional uint64 acked_count = 3;
+  optional uint64 expired_count = 4;
+  optional uint64 overflow_evicted_count = 5;
+  optional uint64 storage_error_count = 6;
+  optional uint64 overflow_rejected_count = 7;
+  optional uint64 oversize_rejected_count = 8;
+  optional uint64 previous_boot_discarded_count = 9;
+  optional bool storage_available = 10;
+}
+
+enum ResourceLevel {
+  RESOURCE_LEVEL_UNSPECIFIED = 0;
+  NORMAL = 1;
+  LEVEL1_WARN = 2;
+  LEVEL2_FALLBACK = 3;
+}
+
+message ResourcePressureStatus {
+  optional ResourceLevel level = 1;
+  optional string reason = 2;
+}
+
+enum ComponentId {
+  COMPONENT_UNSPECIFIED = 0;
+  MGMT_WIFI = 1;
+  MONITOR_WIFI = 2;
+  BLE = 3;
+  TELEMETRY_CONNECTION = 4;
+  ALERT_INPUT = 5;
+}
+
+enum ComponentState {
+  COMPONENT_STATE_UNSPECIFIED = 0;
+  READY = 1;
+  IDLE = 2;
+  STARTING = 3;
+  DEGRADED = 4;
+  FAILED = 5;
+  UNKNOWN = 6;
+}
+
+message ComponentHealth {
+  optional ComponentId component_id = 1;
+  optional ComponentState state = 2;
+  optional string reason = 3;
+  optional int64 last_ok_ms = 4;
+  optional int64 sampled_at_ms = 5;
+  optional string recovery_phase = 6;
+}
+
+message DeviceHealth {
+  repeated ComponentHealth components = 1;
+}
+
+enum ObservedDeviceKind {
+  OBSERVED_KIND_UNSPECIFIED = 0;
+  AP = 1;
+  CLIENT = 2;
+}
+
+enum AssociationState {
+  ASSOCIATION_UNSPECIFIED = 0;
+  NOT_ESTABLISHED = 1;
+  CONFIRMED = 2;
+}
+
+message ObservedDevice {
+  optional string device_key = 1;
+  optional string mac = 2;
+  optional ObservedDeviceKind kind = 3;
+  optional string ssid = 4;
+  optional string bssid = 5;
+  optional string channel = 6;
+  optional float rssi_dbm = 7;
+  optional int64 first_seen_ms = 8;
+  optional int64 last_seen_ms = 9;
+  optional AssociationState association_state = 10;
+  optional string related_ap_bssid = 11;
+  optional string source_scope = 12;
+  optional string security = 13;
+}
+
+message ObservedDevicesRequest {
+  optional string phone_id = 1;
+  optional string page_token = 2;
+  optional uint32 page_size = 3;
+  optional string ssid_filter = 4;
+  optional string bssid_filter = 5;
+  optional ObservedDeviceKind kind = 6;
+}
+
+message ObservedDevicesPage {
+  repeated ObservedDevice devices = 1;
+  optional string next_page_token = 2;
+  optional uint64 generation = 3;
+  optional bool truncated = 4;
+  optional int64 sampled_at_ms = 5;
+  optional string coverage = 6;
+  optional uint32 total_count = 7;
+}
+
+message SetCaptureProfileRequest {
+  optional string phone_id = 1;
+  optional string request_id = 2;
+  optional CaptureProfile target_profile = 3;
+}
+
+message RecoverComponentRequest {
+  optional string phone_id = 1;
+  optional string request_id = 2;
+  optional ComponentId component = 3;
+  optional bool allow_hotspot_restart = 4;
+}
+
+enum CommandStatus {
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  ACCEPTED = 1;
+  REFUSED = 2;
+  BUSY = 3;
+  UNSUPPORTED = 4;
+}
+
+message ControlCommandResponse {
+  optional string request_id = 1;
+  optional bool accepted = 2;
+  optional CommandStatus status = 3;
+  optional string reason = 4;
 }

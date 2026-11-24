@@ -194,6 +194,9 @@ void kismetSample() {
     auto station = device;
     station["kismet.device.base.type"] = "Wi-Fi Client";
     station["kismet.device.base.macaddr"] = "20:00:00:00:00:03";
+    station["kismet.device.base.key"] = "client-id";
+    station["last_bssid"] = device["kismet.device.base.macaddr"];
+    device["associated_clients"] = {{"20:00:00:00:00:03", "client-id"}};
     auto stale = device;
     stale["kismet.device.base.macaddr"] = "20:00:00:00:00:04";
     stale["kismet.device.base.last_time"] = now - 301;
@@ -201,7 +204,7 @@ void kismetSample() {
                   {"kismet.alert.header", "BEACON_CHANGE"}, {"kismet.alert.text", "A test alert"},
                   {"kismet.alert.bssid", device["kismet.device.base.macaddr"]}};
     Json unrelated = alert;
-    unrelated["kismet.alert.hash"] = 43;
+    unrelated["kismet.alert.header"] = "DEAUTHFLOOD";
     unrelated["kismet.alert.bssid"] = mixed["kismet.device.base.macaddr"];
     const auto choices = Json::array({{
         {"kismet.datasource.uuid", uppercase},
@@ -233,8 +236,15 @@ void kismetSample() {
            "count deduplicated live metadata without mixed or stale readings");
     expect(reading.wireless.priority_aps_size() == 1 && reading.wireless.priority_aps(0).frequency_khz() == 2462000,
            "priority AP holds lightweight measured metadata");
-    expect(reading.events.size() == 1 && reading.events[0].evidence_id() == "42",
-           "only the linked native Kismet alert is emitted");
+    expect(reading.devices.size() == 2 &&
+           reading.devices[1].association_state() == pocketnet::v1::CONFIRMED,
+           "explicit Kismet evidence relates the client to the observed AP");
+    const auto alerts = collector.sample_alerts();
+    expect(alerts.reachable && alerts.events.size() == 2 &&
+           alerts.events[0].risk_class() == pocketnet::v1::SUSPICIOUS &&
+           alerts.events[1].risk_class() == pocketnet::v1::CRITICAL &&
+           alerts.events[0].event_id() != alerts.events[1].event_id(),
+           "alerts are independent of the view and ignore an upstream hash collision");
     monitor["timestamp_ms"] = (now - 60) * 1000;
     f.write("monitor.json", monitor.dump());
     const auto expired = collector.sample();

@@ -212,6 +212,16 @@ def managed_configuration(root, release):
         if asset.is_file():
             settings[f"etc/systemd/system/{unit}"] = asset.read_bytes()
             settings[f"etc/systemd/system/multi-user.target.wants/{unit}"] = f"../{unit}"
+    socket = assets / "piagent-control.socket"
+    control_assets = {
+        "etc/systemd/system/piagent-control.socket": socket,
+        "etc/systemd/system/piagent-control@.service": assets / "piagent-control@.service",
+        "etc/sysusers.d/piagent-control.conf": assets / "piagent-control.sysusers.conf",
+    }
+    for path, asset in control_assets.items():
+        settings[path] = asset.read_bytes() if socket.is_file() else None
+    settings["etc/systemd/system/sockets.target.wants/piagent-control.socket"] = (
+        "../piagent-control.socket" if socket.is_file() else None)
     kismet = "etc/kismet/piagent.conf"
     template = (release / "raspberry/config/kismet/piagent.conf").read_bytes()
     if (root / kismet).is_file():
@@ -351,6 +361,11 @@ def install(root, live, archive, expected_sha):
             changes = {path: value for path, value in config.items() if prior_config[path][0] != value}
             units = [unit for unit in dict.fromkeys(configuration_units(changes) +
                      changed_units(before, manifest["files"])) if live and active(unit)]
+            control_unit = "piagent-control.socket"
+            control_installed = config.get("etc/systemd/system/piagent-control.socket") is not None
+            control_was_running = live and active(control_unit)
+            stopped_control = False
+            started_control = False
             # Restarting the hotspot also affects its DHCP and telemetry
             # consumers. Include previously active consumers explicitly so an
             # SSH update cannot leave them stopped after the hotspot recovers.
@@ -360,13 +375,24 @@ def install(root, live, archive, expected_sha):
                         units.append(unit)
             applied = []
             try:
+                if control_was_running and not control_installed:
+                    subprocess.run(["systemctl", "stop", control_unit], check=True, timeout=20)
+                    stopped_control = True
                 for path, value in changes.items():
                     write_configuration(root / path, value, prior_config[path][1])
                     applied.append(path)
                 if previous != selected:
                     set_current(prefix, selected)
+                if control_installed:
+                    args = ["systemd-sysusers"]
+                    if not live:
+                        args.append(f"--root={root}")
+                    subprocess.run([*args, "piagent-control.conf"], check=True, timeout=20)
                 if live and applied:
                     subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=20)
+                if live and control_installed and not control_was_running:
+                    subprocess.run(["systemctl", "start", control_unit], check=True, timeout=20)
+                    started_control = True
                 restart(units)
                 if live:
                     subprocess.run(["systemctl", "enable", "zramswap.service"], check=True, timeout=20)
@@ -393,10 +419,14 @@ def install(root, live, archive, expected_sha):
                     else:
                         (prefix / "current").unlink()
                 try:
+                    if started_control:
+                        subprocess.run(["systemctl", "stop", control_unit], check=True, timeout=20)
                     for path in reversed(applied):
                         write_configuration(root / path, *prior_config[path])
                     if live and applied:
                         subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=20)
+                    if stopped_control:
+                        subprocess.run(["systemctl", "start", control_unit], check=True, timeout=20)
                     if previous:
                         restart(units)
                 except (OSError, RuntimeError, subprocess.SubprocessError) as error:

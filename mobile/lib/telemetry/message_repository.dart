@@ -13,6 +13,12 @@ class StoredTelemetryEvent {
   final bool unread;
 }
 
+typedef HighRiskRecord = ({
+  HighRiskEnvelope envelope,
+  bool unread,
+  String status,
+});
+
 class MessageRepository {
   MessageRepository({
     Future<Database> Function(OpenDatabaseOptions)? openDatabase,
@@ -29,11 +35,12 @@ class MessageRepository {
   final int maximumEvents;
   Future<Database>? _opening;
 
-  Future<Database> _open() => _opening ??= _openDatabase(
-    OpenDatabaseOptions(
-      version: 1,
-      onCreate: (db, _) async {
-        await db.execute('''
+  Future<Database> _open() => _opening ??=
+      _openDatabase(
+        OpenDatabaseOptions(
+          version: 2,
+          onCreate: (db, _) async {
+            await db.execute('''
           CREATE TABLE messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             device_key TEXT NOT NULL,
@@ -43,19 +50,128 @@ class MessageRepository {
             UNIQUE(device_key, event_id)
           )
         ''');
-        await db.execute('''
+            await db.execute('''
           CREATE TABLE cursors (
             device_key TEXT NOT NULL PRIMARY KEY,
             boot_id TEXT NOT NULL,
             sequence INTEGER NOT NULL
           )
         ''');
-        await db.execute(
-          'CREATE INDEX messages_device_order ON messages (device_key, id)',
-        );
+            await db.execute(
+              'CREATE INDEX messages_device_order ON messages (device_key, id)',
+            );
+            await _createHighRiskSchema(db);
+          },
+          onUpgrade: (db, oldVersion, _) async {
+            if (oldVersion < 2) await _createHighRiskSchema(db);
+          },
+        ),
+      ).then(
+        (database) => database,
+        onError: (Object error, StackTrace stack) {
+          _opening = null;
+          Error.throwWithStackTrace(error, stack);
+        },
+      );
+
+  static Future<void> _createHighRiskSchema(Database db) async {
+    await db.execute('''
+      CREATE TABLE high_risk_archive (
+        device_key TEXT NOT NULL,
+        durable_id TEXT NOT NULL,
+        payload BLOB,
+        observed_at_ms INTEGER NOT NULL,
+        unread INTEGER NOT NULL DEFAULT 1,
+        user_status TEXT NOT NULL DEFAULT 'new',
+        PRIMARY KEY (device_key, durable_id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX high_risk_order ON high_risk_archive '
+      '(device_key, observed_at_ms DESC, durable_id)',
+    );
+  }
+
+  Future<bool> ingestHighRisk(
+    String deviceKey,
+    HighRiskEnvelope envelope,
+  ) async {
+    final db = await _open();
+    return db.transaction((transaction) async {
+      await transaction.insert('high_risk_archive', {
+        'device_key': deviceKey,
+        'durable_id': envelope.durableId,
+        'payload': envelope.writeToBuffer(),
+        'observed_at_ms':
+            (envelope.event.hasObservedAtMs()
+                    ? envelope.event.observedAtMs
+                    : envelope.event.timestampMs)
+                .toInt(),
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      return Sqflite.firstIntValue(
+            await transaction.rawQuery('SELECT changes()'),
+          ) ==
+          1;
+    });
+  }
+
+  Future<List<HighRiskRecord>> highRiskPage(
+    String deviceKey,
+    int offset,
+  ) async {
+    final db = await _open();
+    final rows = await db.query(
+      'high_risk_archive',
+      where: 'device_key = ? AND payload IS NOT NULL',
+      whereArgs: [deviceKey],
+      orderBy: 'observed_at_ms DESC, durable_id',
+      limit: 30,
+      offset: offset,
+    );
+    return [
+      for (final row in rows)
+        (
+          envelope: HighRiskEnvelope.fromBuffer(row['payload']! as List<int>),
+          unread: row['unread'] == 1,
+          status: row['user_status']! as String,
+        ),
+    ];
+  }
+
+  Future<void> updateHighRisk(
+    String deviceKey,
+    String id, {
+    String? status,
+    bool delete = false,
+  }) async {
+    final db = await _open();
+    await db.update(
+      'high_risk_archive',
+      {
+        'unread': 0,
+        if (status != null &&
+            const {'new', 'acknowledged', 'resolved'}.contains(status))
+          'user_status': status,
+        // Keep only the key after deletion so a replay cannot resurrect the entry.
+        if (delete) ...{
+          'payload': null,
+          'observed_at_ms': 0,
+          'user_status': 'deleted',
+        },
       },
-    ),
-  );
+      where: 'device_key = ? AND durable_id = ? AND payload IS NOT NULL',
+      whereArgs: [deviceKey, id],
+    );
+  }
+
+  Future<void> saveCursor(String deviceKey, EventCursor cursor) async {
+    final db = await _open();
+    await db.insert('cursors', {
+      'device_key': deviceKey,
+      'boot_id': cursor.bootId,
+      'sequence': cursor.sequence.toInt(),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
 
   Future<({EventCursor? cursor, List<StoredTelemetryEvent> messages})> load(
     String deviceKey,

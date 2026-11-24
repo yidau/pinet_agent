@@ -38,6 +38,9 @@ done
 install -m 0644 "$source_dir/raspberry/config/time-sync/piagent-time-sync.sysusers.conf" \
     "$source_dir/raspberry/config/enrollment/piagent-enrollment.sysusers.conf" "$root/etc/sysusers.d/"
 install -m 0644 "$source_dir/deploy/systemd/pocketnet-kismet.sysusers.conf" "$root/etc/sysusers.d/"
+install -m 0644 "$source_dir/deploy/systemd/piagent-control.sysusers.conf" "$root/etc/sysusers.d/piagent-control.conf"
+install -m 0644 "$source_dir/deploy/systemd/piagent-control.socket" \
+    "$source_dir/deploy/systemd/piagent-control@.service" "$unit_dir/"
 for service in piagent-clock piagent-enrollment-wifi piagent-telemetry piagent-wireless-manager; do
     install -D -m 0644 "$source_dir/deploy/systemd/$service.conf" "$unit_dir/$service.service.d/90-pocketnet-image.conf"
 done
@@ -62,6 +65,7 @@ printf '%s\n' "$(date -u +%s)" > "$root/etc/pocketnet/build-epoch"
 chmod 0644 "$root/etc/pocketnet/build-epoch"
 
 systemd-sysusers --root="$root"
+systemctl --root="$root" enable piagent-control.socket
 systemctl --root="$root" mask hostapd.service swapfile.swap dphys-swapfile.service
 systemctl --root="$root" enable zramswap.service
 if [[ -e "$root/lib/systemd/system/kismet.service" || -e "$root/usr/lib/systemd/system/kismet.service" ]]; then

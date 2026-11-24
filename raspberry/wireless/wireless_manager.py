@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from threading import Event
 import time
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from .kismet_adapter import KismetAdapter, KismetError, records
 
@@ -23,6 +23,8 @@ HOSTAPD = Path("/etc/hostapd/piagent.conf")
 NET = Path("/sys/class/net")
 POLL_SECONDS = 5
 RETRY_SECONDS = 20
+PROFILES = {"light": ("true", "false"), "balanced": ("false", "true"), "extended": ("false", "false")}
+DESIRED_PROFILE = Path("/run/piagent-wireless/desired-profile.json")
 LOG = logging.getLogger(__name__)
 
 
@@ -129,9 +131,10 @@ class MonitorApi(KismetAdapter):
     def list_sources(self):
         return records(self._request("/datasource/all_sources.json"))
 
-    def add(self, uuid):
+    def add(self, uuid, profile="light"):
+        filter_mgmt, truncate_data = PROFILES[profile]
         definition = (f"{MONITOR_INTERFACE}:type=linuxwifi,name={SOURCE_NAME},uuid={uuid},"
-                      f"vif={MONITOR_VIF},retry=false,filter_mgmt=true")
+                      f"vif={MONITOR_VIF},retry=false,filter_mgmt={filter_mgmt},truncate_data={truncate_data}")
         self._request("/datasource/add_source.cmd", {"json": json.dumps({"definition": definition})},
                       text_reply=True, timeout=17)
 
@@ -161,17 +164,36 @@ def is_local_monitor(row):
             and row.get(FIELD + "name") == SOURCE_NAME
             and row.get(FIELD + "interface") == MONITOR_INTERFACE
             and interface == MONITOR_INTERFACE and vifs == [MONITOR_VIF]
-            and row.get(FIELD + "retry") in (False, 0)
-            and "filter_mgmt=true" in options.split(","))
+            and row.get(FIELD + "retry") in (False, 0))
+
+
+def actual_profile(row):
+    if not is_local_monitor(row):
+        return None
+    parts = [value.partition("=") for value in row[FIELD + "definition"].split(":", 1)[1].split(",")]
+    options = {name: value for name, _, value in parts if name in ("filter_mgmt", "truncate_data")}
+    if sum(name in ("filter_mgmt", "truncate_data") for name, _, _ in parts) != len(options):
+        return None
+    selected = options.get("filter_mgmt"), options.get("truncate_data", "false")
+    return next((name for name, settings in PROFILES.items() if selected == settings), None)
+
+
+def desired_profile(path=DESIRED_PROFILE):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8")).get("profile")
+    except (OSError, ValueError, AttributeError):
+        return "light"
+    return value if isinstance(value, str) and value in PROFILES else "light"
 
 
 class MonitorManager:
-    def __init__(self, config, api, *, detect=select_radio, net=NET, clock=time.monotonic):
+    def __init__(self, config, api, *, detect=select_radio, net=NET, clock=time.monotonic, profile="light"):
         self.config = config
         self.api = api
         self.detect = detect
         self.net = net
         self.clock = clock
+        self.profile = profile
         self.last_attempt = float("-inf")
         self.attempt_radio = None
         # The last confirmed/opened kernel device, not just its stable USB identity.
@@ -232,6 +254,8 @@ class MonitorManager:
 
         sources = self.api.list_sources()
         row = self.owned_source(sources)
+        if row and actual_profile(row) != self.profile:
+            return "degraded", "monitor_profile_not_applied", None
         if self.source_conflict(sources, row):
             self.needs_reopen = True
             if row and row.get(FIELD + "running") in (True, 1) and self.retry_due(radio):
@@ -290,16 +314,24 @@ class MonitorManager:
         if row:
             self.api.open_source(self.config.datasource_uuid)
         else:
-            self.api.add(self.config.datasource_uuid)
+            if self.profile == "light":
+                self.api.add(self.config.datasource_uuid)
+            else:
+                self.api.add(self.config.datasource_uuid, self.profile)
         self.last_radio = radio
         self.needs_reopen = False
         return "starting", "monitor_waiting_for_source", None
 
 
-def write_status(path, state, reason, uuid):
-    data = {"state": state, "reason": reason, "timestamp_ms": time.time_ns() // 1_000_000}
+def write_status(path, state, reason, uuid, profile=None, observation_epoch=None):
+    data = {"state": state, "reason": reason, "timestamp_ms": time.time_ns() // 1_000_000,
+            "boottime_ns": time.monotonic_ns()}
     if uuid:
         data["datasource_uuid"] = uuid
+    if state == "ready" and profile is not None:
+        data["actual_profile"] = profile
+    if state == "ready" and observation_epoch:
+        data["observation_epoch"] = observation_epoch
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False, encoding="utf-8") as stream:
         temporary = Path(stream.name)
         try:
@@ -318,20 +350,25 @@ def main():
     try:
         config = MonitorConfig(**json.loads((credentials / "monitor.json").read_text(encoding="utf-8")))
         key = (credentials / "monitor.key").read_text(encoding="ascii").strip()
-        manager = MonitorManager(config, MonitorApi(f"http://127.0.0.1:{config.kismet_port}", key))
+        manager = MonitorManager(config, MonitorApi(f"http://127.0.0.1:{config.kismet_port}", key),
+                                 profile=desired_profile())
     except (OSError, TypeError, ValueError):
         manager = None
     stop = Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     previous = None
+    manager_epoch = uuid4().hex
+    observation_epoch = None
     try:
         while not stop.is_set():
             state = manager.check() if manager else ("degraded", "monitor_config_invalid", None)
             if state != previous:
                 LOG.info("Wi-Fi datasource %s (%s)", state[0], state[1])
                 previous = state
-            write_status(status, *state)
+            if state[0] == "ready":
+                observation_epoch = f"{manager_epoch}:{manager.last_radio.ifindex}"
+            write_status(status, *state, manager.profile if manager else None, observation_epoch)
             stop.wait(POLL_SECONDS)
     finally:
         if manager:

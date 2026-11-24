@@ -1,5 +1,6 @@
 #include "event_store.hpp"
 #include "device_authorization.hpp"
+#include "local_control.hpp"
 #include "monitoring.grpc.pb.h"
 #include "runtime.hpp"
 
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <iterator>
 #include <mutex>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -125,27 +127,93 @@ private:
 
 class TelemetryService final : public v1::TelemetryService::Service {
 public:
-    TelemetryService(const Runtime& state, const EventStore& events, std::string registry)
-        : state_(state), events_(events), registry_(std::move(registry)) {}
+    TelemetryService(Runtime& state, const EventStore& events, HighRiskOutbox& outbox, std::string registry)
+        : state_(state), events_(events), outbox_(outbox), registry_(std::move(registry)) {}
+
+    grpc::Status AckHighRisk(grpc::ServerContext* context, const v1::AckHighRiskRequest* request,
+                             v1::AckHighRiskResponse* response) override {
+        auto access = authorize_request(*context, request->phone_id());
+        if (!access.ok()) return access;
+        if (!hex_id(request->durable_id())) return {grpc::StatusCode::INVALID_ARGUMENT, "Invalid durable ID"};
+        if (!owns_session(request->phone_id(), true)) return denied();
+        response->set_result(outbox_.acknowledge(request->phone_id(), request->durable_id()));
+        return grpc::Status::OK;
+    }
+
+    grpc::Status GetObservedDevices(grpc::ServerContext* context, const v1::ObservedDevicesRequest* request,
+                                    v1::ObservedDevicesPage* response) override {
+        auto access = authorize_request(*context, request->phone_id());
+        if (!access.ok()) return access;
+        if (!owns_session(request->phone_id())) return denied();
+        std::string error;
+        if (!state_.observed_devices(*request, *response, error)) {
+            return {error == "STALE_PAGE" ? grpc::StatusCode::FAILED_PRECONDITION : grpc::StatusCode::INVALID_ARGUMENT,
+                    error};
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status SetCaptureProfile(grpc::ServerContext* context, const v1::SetCaptureProfileRequest* request,
+                                    v1::ControlCommandResponse* response) override {
+        auto access = control_access(*context, request->phone_id(), request->request_id());
+        if (!access.ok()) return access;
+        const char* action = nullptr;
+        switch (request->target_profile()) {
+            case v1::LIGHT: action = "light"; break;
+            case v1::BALANCED: action = "balanced"; break;
+            case v1::EXTENDED: action = "extended"; break;
+            default: return {grpc::StatusCode::INVALID_ARGUMENT, "Unknown capture profile"};
+        }
+        if (request->target_profile() != v1::LIGHT &&
+            state_.snapshot().resource_pressure().level() == v1::LEVEL2_FALLBACK) {
+            response->set_request_id(request->request_id());
+            response->set_status(v1::REFUSED);
+            response->set_reason("resource_level2_fallback");
+        } else {
+            *response = run_control(action, request->request_id());
+        }
+        return grpc::Status::OK;
+    }
+
+    grpc::Status RecoverComponent(grpc::ServerContext* context, const v1::RecoverComponentRequest* request,
+                                   v1::ControlCommandResponse* response) override {
+        auto access = control_access(*context, request->phone_id(), request->request_id());
+        if (!access.ok()) return access;
+        const char* action = nullptr;
+        switch (request->component()) {
+            case v1::MONITOR_WIFI: action = "monitor"; break;
+            case v1::BLE: action = "ble"; break;
+            case v1::MGMT_WIFI: action = request->allow_hotspot_restart() ? "hotspot" : "check_hotspot"; break;
+            case v1::TELEMETRY_CONNECTION:
+                response->set_request_id(request->request_id());
+                response->set_status(v1::UNSUPPORTED);
+                response->set_reason("reconnect_on_phone");
+                return grpc::Status::OK;
+            default: return {grpc::StatusCode::INVALID_ARGUMENT, "Unknown recovery component"};
+        }
+        *response = run_control(action, request->request_id());
+        return grpc::Status::OK;
+    }
 
     grpc::Status Subscribe(grpc::ServerContext* context, const v1::SubscribeRequest* request,
                            grpc::ServerWriter<v1::TelemetryMessage>* stream) override {
-        const auto auth = context->client_metadata().equal_range("authorization");
-        if (auth.first == auth.second || std::next(auth.first) != auth.second) return denied();
-        const auto& credential = auth.first->second;
-        const std::string bearer(credential.data(), credential.size());
-        if (bearer.size() != 50 || bearer.compare(0, 7, "Bearer ") != 0) return denied();
-        const std::string token = bearer.substr(7);
         const auto& device = request->device_id();
-        auto access = authorization(device, token);
+        auto access = authorize_request(*context, device);
         if (!access.ok()) return access;
-        if (busy_.test_and_set()) {
-            return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Telemetry already has a subscriber"};
+        {
+            const std::lock_guard<std::mutex> guard(owner_lock_);
+            if (!owner_.empty()) return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Telemetry already has a subscriber"};
+            owner_ = device;
+            owner_accepts_risk_ = request->accepts_high_risk();
         }
         struct Release {
-            std::atomic_flag& busy;
-            ~Release() { busy.clear(); }
-        } release{busy_};
+            TelemetryService& service;
+            ~Release() {
+                const std::lock_guard<std::mutex> guard(service.owner_lock_);
+                service.owner_.clear();
+                service.owner_accepts_risk_ = false;
+            }
+        } release{*this};
 
         try {
             DeadlineWriter writer(*context, *stream);
@@ -166,7 +234,7 @@ public:
             auto check_auth = Clock::now() + 2s;
             while (!context->IsCancelled()) {
                 if (Clock::now() >= check_auth) {
-                    access = authorization(device, token);
+                    access = authorize_request(*context, device);
                     if (!access.ok()) return access;
                     check_auth = Clock::now() + 2s;
                 }
@@ -175,6 +243,12 @@ public:
                     sequence = snapshot.sequence();
                     *message.mutable_snapshot() = std::move(snapshot);
                     if (!writer.write(message)) break;
+                }
+                if (request->accepts_high_risk()) {
+                    if (auto pending = outbox_.next_for(device)) {
+                        *message.mutable_high_risk() = std::move(*pending);
+                        if (!writer.write(message)) break;
+                    }
                 }
                 auto replay = events_.read_after(cursor);
                 auto& next = replay.next;
@@ -198,6 +272,28 @@ public:
     }
 
 private:
+    static bool hex_id(const std::string& value) {
+        return value.size() == 32 && value.find_first_not_of("0123456789abcdef") == std::string::npos;
+    }
+    bool owns_session(const std::string& phone, bool high_risk = false) {
+        const std::lock_guard<std::mutex> guard(owner_lock_);
+        return !owner_.empty() && owner_ == phone && (!high_risk || owner_accepts_risk_);
+    }
+    grpc::Status control_access(grpc::ServerContext& context, const std::string& phone, const std::string& request) {
+        auto access = authorize_request(context, phone);
+        if (!access.ok()) return access;
+        if (!owns_session(phone)) return denied();
+        if (!hex_id(request)) return {grpc::StatusCode::INVALID_ARGUMENT, "Invalid request ID"};
+        return grpc::Status::OK;
+    }
+    grpc::Status authorize_request(grpc::ServerContext& context, const std::string& device) const {
+        const auto auth = context.client_metadata().equal_range("authorization");
+        if (auth.first == auth.second || std::next(auth.first) != auth.second) return denied();
+        const auto& credential = auth.first->second;
+        const std::string bearer(credential.data(), credential.size());
+        if (bearer.size() != 50 || bearer.compare(0, 7, "Bearer ") != 0) return denied();
+        return authorization(device, bearer.substr(7));
+    }
     static grpc::Status denied() {
         return {grpc::StatusCode::PERMISSION_DENIED, "An active enrolled device is required"};
     }
@@ -222,10 +318,13 @@ private:
         return writer.write(message);
     }
 
-    const Runtime& state_;
+    Runtime& state_;
     const EventStore& events_;
+    HighRiskOutbox& outbox_;
     const std::string registry_;
-    std::atomic_flag busy_ = ATOMIC_FLAG_INIT;
+    std::mutex owner_lock_;
+    std::string owner_;
+    bool owner_accepts_risk_ = false;
 };
 
 int run() {
@@ -244,10 +343,13 @@ int run() {
     tls.pem_key_cert_pairs.push_back({
         text_file(env("PIAGENT_TELEMETRY_TLS_KEY", (directory / "server.key").c_str())),
         text_file(env("PIAGENT_TELEMETRY_TLS_CERT", (directory / "server.pem").c_str()))});
-    EventStore events(boot_id());
+    const auto linux_boot = boot_id();
+    EventStore events(linux_boot);
+    HighRiskOutbox outbox(env("STATE_DIRECTORY"), linux_boot);
     Runtime state(events, KismetCollector(env("PIAGENT_KISMET_URL"), env("PIAGENT_KISMET_API_KEY")),
-                  events.session_id());
-    TelemetryService service(state, events, env("PIAGENT_DEVICE_REGISTRY", "/var/lib/piagent-devices/devices.sqlite3"));
+                  events.session_id(), linux_boot, &outbox);
+    TelemetryService service(state, events, outbox,
+                             env("PIAGENT_DEVICE_REGISTRY", "/var/lib/piagent-devices/devices.sqlite3"));
 
     grpc::ServerBuilder builder;
     grpc::ResourceQuota memory;
@@ -256,7 +358,7 @@ int run() {
     builder.SetSyncServerOption(grpc::ServerBuilder::SyncServerOption::MIN_POLLERS, 1);
     builder.SetSyncServerOption(grpc::ServerBuilder::SyncServerOption::MAX_POLLERS, 2);
     builder.SetMaxReceiveMessageSize(4096);
-    builder.SetMaxSendMessageSize(64 * 1024);
+    builder.SetMaxSendMessageSize(256 * 1024);
     builder.AddChannelArgument("grpc.http2.write_buffer_size", 32 * 1024);
     builder.AddListeningPort(listen, grpc::SslServerCredentials(tls));
     builder.RegisterService(&service);

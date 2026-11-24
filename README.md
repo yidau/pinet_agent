@@ -2,16 +2,16 @@
 
 PocketNet is a Raspberry Pi based passive wireless security observation device.
 
-## V1 architecture
+## V2 architecture
 
 - Raspberry Pi built-in Wi-Fi provides the private phone management hotspot.
 - A separately bound USB Wi-Fi adapter operates in Monitor Mode.
-- Kismet tracks wireless state in RAM. The managed Linux Wi-Fi source retains management frames and EAPOL with `filter_mgmt=true`. Capture files and wireless history are disabled by default.
-- A native C++ service collects Linux metrics, reads Kismet metadata and replays recent events from a bounded RAM buffer over TLS gRPC.
-- The Flutter app provides the live dashboard and persists event history and replay cursors in SQLite. Events awaiting sync may be lost when the Pi restarts.
+- Kismet tracks wireless state in RAM. The managed USB adapter starts in the light profile and can switch to balanced or extended. Capture files are disabled by default.
+- A native C++ service sends system metrics, wireless summaries, recent events, and bounded device pages over TLS gRPC. A local allowlisted service handles recovery and capture profile changes.
+- The Flutter app provides a live dashboard, normal monitoring, and a high-risk archive. Ordinary observations remain in RAM. High-risk deliveries use a bounded queue on the Pi for up to 180 seconds and are acknowledged after the phone commits them to SQLite.
 - BLE enrollment, BLE time synchronization and the small USB/Kismet datasource manager remain Python components for now. Ubuntu 22.04 deployment must provide Python 3.12 for the BLE time-sync service.
 - There is no MCP server, MCP SDK, or Agent runtime on the Raspberry Pi. The business interface is gRPC/Protobuf.
-- AI is reserved in the mobile UI and is not implemented in this release.
+- The mobile navigation reserves the deep inspection and active testing pages for future releases.
 
 ## Repository layout
 
@@ -34,4 +34,4 @@ The phone connects to the C++ gRPC service using the pinned CA and its per-devic
 
 See the [Ubuntu 22.04 ARM64 image builder](docs/image-builder.md) for building a development image, configuring wired SSH at `192.168.77.2`, and installing software updates.
 
-See [V1 telemetry](docs/v1.0-telemetry.md) and [wireless manager](docs/v1.0-wireless-manager.md) for runtime details.
+See [V2 monitoring and acceptance](docs/v2-monitoring.md) for the current runtime, upgrade and rollback behavior. [V1 telemetry](docs/v1.0-telemetry.md) and the [wireless manager](docs/v1.0-wireless-manager.md) document the earlier release.

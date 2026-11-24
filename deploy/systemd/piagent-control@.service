@@ -1,0 +1,21 @@
+[Unit]
+Description=PocketNet restricted recovery action
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/pocketnet/current
+ExecStart=/opt/pocketnet/python/bin/python3.12 -B -m raspberry.control.recovery
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=105
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_CHOWN
+ReadWritePaths=/run/pocketnet-control -/run/piagent-wireless
+RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK

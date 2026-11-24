@@ -2,18 +2,27 @@ package net.piagent.piagent
 
 import android.Manifest
 import android.content.Intent
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var permissionResult: MethodChannel.Result? = null
+    private var notificationResult: MethodChannel.Result? = null
     private val enrollment by lazy { EnrollmentChannel(this) }
+
+    override fun provideFlutterEngine(context: Context): FlutterEngine? =
+        FlutterEngineCache.getInstance().get(MonitoringService.engineId)
+
+    override fun shouldDestroyEngineWithHost(): Boolean = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        FlutterEngineCache.getInstance().put(MonitoringService.engineId, flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "net.piagent.piagent/time_sync")
             .setMethodCallHandler { call, result ->
                 if (call.method == "requestBluetoothPermissions") {
@@ -24,6 +33,55 @@ class MainActivity : FlutterActivity() {
             }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "net.piagent.piagent/enrollment")
             .setMethodCallHandler(enrollment::handle)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, MonitoringService.channelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        if (Build.VERSION.SDK_INT >= 33 &&
+                            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                            if (notificationResult != null) {
+                                result.success(false)
+                            } else {
+                                notificationResult = result
+                                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), notificationPermissionsRequest)
+                            }
+                        } else {
+                            startMonitoring(result)
+                        }
+                    }
+                    "stop" -> {
+                        stopService(Intent(this, MonitoringService::class.java))
+                        result.success(false)
+                    }
+                    "notifyRisk" -> {
+                        val id = call.argument<String>("id").orEmpty()
+                        val message = call.argument<String>("message").orEmpty()
+                        MonitoringService.notifyRisk(applicationContext, id, message)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun startMonitoring(result: MethodChannel.Result) {
+        if (MonitoringService.running) {
+            result.success(true)
+            return
+        }
+        if (MonitoringService.startResult != null) {
+            result.success(false)
+            return
+        }
+        val app = applicationContext
+        MonitoringService.startResult = { enabled -> result.success(enabled) }
+        try {
+            val intent = Intent(app, MonitoringService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) app.startForegroundService(intent)
+            else app.startService(intent)
+        } catch (_: RuntimeException) {
+            MonitoringService.completeStart(false)
+        }
     }
 
     private fun requestBluetoothPermissions(result: MethodChannel.Result) {
@@ -57,6 +115,14 @@ class MainActivity : FlutterActivity() {
             )
             permissionResult = null
         }
+        if (requestCode == notificationPermissionsRequest) {
+            val result = notificationResult
+            notificationResult = null
+            if (result != null) {
+                if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startMonitoring(result)
+                else result.success(false)
+            }
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -66,5 +132,6 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val bluetoothPermissionsRequest = 2041
+        private const val notificationPermissionsRequest = 2042
     }
 }

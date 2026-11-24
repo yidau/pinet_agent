@@ -8,6 +8,7 @@ import 'enrollment/enrollment_profile.dart';
 import 'enrollment/enrollment_screen.dart';
 import 'telemetry/dashboard_page.dart';
 import 'telemetry/message_page.dart';
+import 'telemetry/normal_monitor_page.dart';
 import 'telemetry/telemetry_connection.dart';
 import 'time_sync/time_sync_screen.dart';
 import 'ui/console_style.dart';
@@ -57,6 +58,8 @@ class _PocketNetHomeState extends State<PocketNetHome>
   int _tab = 0;
   bool _loading = true;
   bool _profileError = false;
+  TelemetryPhase _shownPhase = TelemetryPhase.stopped;
+  bool _shownRequested = false;
 
   @override
   void initState() {
@@ -75,7 +78,15 @@ class _PocketNetHomeState extends State<PocketNetHome>
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted ||
+        (_shownPhase == _telemetry.phase &&
+            _shownRequested == _telemetry.isRequested)) {
+      return;
+    }
+    setState(() {
+      _shownPhase = _telemetry.phase;
+      _shownRequested = _telemetry.isRequested;
+    });
   }
 
   @override
@@ -113,10 +124,8 @@ class _PocketNetHomeState extends State<PocketNetHome>
   Future<void> _openEnrollment() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => EnrollmentScreen(
-          profile: _profile,
-          onRegistered: _registered,
-        ),
+        builder: (_) =>
+            EnrollmentScreen(profile: _profile, onRegistered: _registered),
       ),
     );
   }
@@ -131,16 +140,27 @@ class _PocketNetHomeState extends State<PocketNetHome>
     _telemetry.stop();
   }
 
+  void _openMessages() {
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('消息中心')),
+            body: SafeArea(child: MessagePage(connection: _telemetry)),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tabs = [
-      DashboardPage(
-        connection: _telemetry,
-        onOpenMessages: () => setState(() => _tab = 1),
-      ),
-      MessagePage(connection: _telemetry),
-      const _AiDeferredPage(),
+      DashboardPage(connection: _telemetry, onOpenMessages: _openMessages),
+      NormalMonitorPage(connection: _telemetry, active: _tab == 1),
+      const _UnavailablePage(title: '深度检测'),
+      const _UnavailablePage(title: '主动测试'),
     ];
 
     return Scaffold(
@@ -165,6 +185,9 @@ class _PocketNetHomeState extends State<PocketNetHome>
                   break;
                 case 'disconnect':
                   _disconnectTelemetry();
+                  break;
+                case 'reconnect':
+                  _telemetry.reconnect();
                   break;
                 case 'theme':
                   widget.onToggleTheme();
@@ -199,6 +222,15 @@ class _PocketNetHomeState extends State<PocketNetHome>
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
+              if (_profile != null)
+                const PopupMenuItem(
+                  value: 'reconnect',
+                  child: ListTile(
+                    leading: Icon(Icons.refresh),
+                    title: Text('重新连接设备'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
               const PopupMenuItem(
                 value: 'theme',
                 child: ListTile(
@@ -227,26 +259,32 @@ class _PocketNetHomeState extends State<PocketNetHome>
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                 child: Row(
                   children: [
-                    Icon(Icons.devices, size: 17,
-                        color: theme.colorScheme.onSurfaceVariant),
+                    Icon(
+                      Icons.devices,
+                      size: 17,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(child: Text('设备 · ${_profile!.piId}')),
-                    Text(
-                      switch (_telemetry.phase) {
-                        TelemetryPhase.live => '实时连接',
-                        TelemetryPhase.connecting => '连接中',
-                        TelemetryPhase.retrying => '重连中',
-                        TelemetryPhase.denied => '未授权',
-                        TelemetryPhase.incompatible => '版本不兼容',
-                        TelemetryPhase.stopped => '未连接',
-                      },
-                      style: theme.textTheme.labelMedium,
-                    ),
+                    Text(switch (_telemetry.phase) {
+                      TelemetryPhase.live => '实时连接',
+                      TelemetryPhase.connecting => '连接中',
+                      TelemetryPhase.retrying => '重连中',
+                      TelemetryPhase.denied => '未授权',
+                      TelemetryPhase.incompatible => '版本不兼容',
+                      TelemetryPhase.stopped => '未连接',
+                    }, style: theme.textTheme.labelMedium),
                   ],
                 ),
               ),
             Expanded(
-              child: IndexedStack(index: _tab, children: tabs),
+              child: IndexedStack(
+                index: _tab,
+                children: [
+                  for (final (index, page) in tabs.indexed)
+                    TickerMode(enabled: _tab == index, child: page),
+                ],
+              ),
             ),
           ],
         ),
@@ -260,18 +298,14 @@ class _PocketNetHomeState extends State<PocketNetHome>
             selectedIcon: Icon(Icons.dashboard),
             label: '仪表盘',
           ),
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: _telemetry.unreadCount > 0,
-              label: Text('${_telemetry.unreadCount}'),
-              child: const Icon(Icons.notifications_outlined),
-            ),
-            selectedIcon: const Icon(Icons.notifications),
-            label: '消息',
+          const NavigationDestination(icon: Icon(Icons.radar), label: '常态监控'),
+          const NavigationDestination(
+            icon: Icon(Icons.travel_explore),
+            label: '深度检测',
           ),
           const NavigationDestination(
-            icon: Icon(Icons.auto_awesome_outlined),
-            label: 'AI（暂缓）',
+            icon: Icon(Icons.lock_outline),
+            label: '主动测试',
           ),
         ],
       ),
@@ -279,8 +313,9 @@ class _PocketNetHomeState extends State<PocketNetHome>
   }
 }
 
-class _AiDeferredPage extends StatelessWidget {
-  const _AiDeferredPage();
+class _UnavailablePage extends StatelessWidget {
+  const _UnavailablePage({required this.title});
+  final String title;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -289,16 +324,15 @@ class _AiDeferredPage extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.auto_awesome, size: 42,
-              color: Theme.of(context).colorScheme.primary),
-          const SizedBox(height: 12),
-          Text('AI 功能暂缓开发',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 6),
-          const Text(
-            '当前版本专注于持续监测、实时仪表盘和安全事件管理。',
-            textAlign: TextAlign.center,
+          Icon(
+            Icons.lock_outline,
+            size: 42,
+            color: Theme.of(context).colorScheme.primary,
           ),
+          const SizedBox(height: 12),
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 6),
+          const Text('尚未开放', textAlign: TextAlign.center),
         ],
       ),
     ),

@@ -36,10 +36,10 @@ add_library(telemetry_proto STATIC
 target_include_directories(telemetry_proto PUBLIC "${GENERATED_DIR}")
 target_link_libraries(telemetry_proto PUBLIC protobuf::libprotobuf PkgConfig::GRPC)
 
-add_library(telemetry_core STATIC src/collectors.cpp src/event_store.cpp src/runtime.cpp)
+add_library(telemetry_core STATIC src/collectors.cpp src/event_store.cpp src/high_risk_outbox.cpp src/local_control.cpp src/runtime.cpp)
 target_include_directories(telemetry_core PUBLIC src)
 target_link_libraries(telemetry_core PUBLIC telemetry_proto
-    PRIVATE OpenSSL::Crypto CURL::libcurl nlohmann_json::nlohmann_json Threads::Threads)
+    PRIVATE OpenSSL::Crypto SQLite::SQLite3 CURL::libcurl nlohmann_json::nlohmann_json Threads::Threads)
 
 add_executable(piagent-telemetry src/main.cpp)
 add_library(device_authorization STATIC src/device_authorization.cpp)
@@ -55,6 +55,10 @@ if(BUILD_TESTING)
     add_executable(event_store_test tests/event_store_test.cpp)
     target_link_libraries(event_store_test PRIVATE telemetry_core device_authorization OpenSSL::Crypto SQLite::SQLite3)
     add_test(NAME event_store COMMAND event_store_test)
+    add_executable(high_risk_outbox_test tests/high_risk_outbox_test.cpp)
+    target_link_libraries(high_risk_outbox_test PRIVATE telemetry_core)
+    add_test(NAME high_risk_outbox COMMAND high_risk_outbox_test)
+    set_tests_properties(high_risk_outbox PROPERTIES TIMEOUT 12)
     add_executable(telemetry_stream_test tests/stream_test.cpp)
     target_link_libraries(telemetry_stream_test PRIVATE telemetry_core OpenSSL::Crypto SQLite::SQLite3)
     add_test(NAME telemetry_stream COMMAND telemetry_stream_test $<TARGET_FILE:piagent-telemetry>)

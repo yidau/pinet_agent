@@ -73,10 +73,15 @@ grep -qx 'ExecStart=/opt/pocketnet/python/bin/python3.12 -B /opt/pocketnet/curre
 grep -qx 'Requires=piagent-hotspot.service piagent-kismet-provision.service' "$unit_dir/piagent-telemetry.service.d/90-pocketnet-image.conf"
 grep -qx 'PartOf=piagent-kismet-provision.service' "$unit_dir/piagent-telemetry.service.d/90-pocketnet-image.conf"
 grep -qx 'ReadWritePaths=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$unit_dir/piagent-kismet.service"
-if grep -q '^StateDirectory=' "$unit_dir/piagent-telemetry.service"; then
-    echo 'Unexpected persistent telemetry directory.' >&2
-    exit 1
-fi
+[[ "$(grep '^StateDirectory=' "$unit_dir/piagent-telemetry.service")" == 'StateDirectory=pocketnet-highrisk' ]]
+grep -qx 'StateDirectoryMode=0700' "$unit_dir/piagent-telemetry.service"
+grep -qx 'DynamicUser=yes' "$unit_dir/piagent-telemetry.service"
+grep -qx 'SocketMode=0660' "$unit_dir/piagent-control.socket"
+grep -qx 'SocketGroup=piagent-control' "$unit_dir/piagent-control.socket"
+grep -qx 'Accept=yes' "$unit_dir/piagent-control.socket"
+test -f "$unit_dir/piagent-control@.service"
+test -f "$root$app/raspberry/control/recovery.py"
+systemctl --root="$root" is-enabled piagent-control.socket
 if awk '$1 !~ /^#/ && NF >= 3 && $3 == "swap" { found=1 } END { exit !found }' "$root/etc/fstab"; then
     echo 'Block-backed swap entry remains in /etc/fstab.' >&2
     exit 1
