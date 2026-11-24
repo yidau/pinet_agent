@@ -8,11 +8,9 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -50,18 +48,41 @@ bool mgmt_ip() {
     return false;
 }
 
-std::array<std::string, 4> unit_health() {
-    std::array<std::string, 4> result;
-    const std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(
-        "/usr/bin/timeout 1 /usr/bin/systemctl is-active piagent-hotspot.service piagent-dhcp.service "
-        "bluetooth.service piagent-ble-time-sync.service 2>/dev/null", "r"), pclose);
-    if (!pipe) return result;
-    std::array<char, 32> line{};
-    for (auto& state : result) {
-        if (!fgets(line.data(), line.size(), pipe.get())) break;
-        std::istringstream(line.data()) >> state;
+Json local_request(const Json& input, timeval deadline) {
+    struct Socket {
+        int descriptor = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        ~Socket() { if (descriptor >= 0) close(descriptor); }
+    } channel;
+    if (channel.descriptor < 0) return {};
+    if (setsockopt(channel.descriptor, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)) != 0 ||
+        setsockopt(channel.descriptor, SOL_SOCKET, SO_SNDTIMEO, &deadline, sizeof(deadline)) != 0) return {};
+    sockaddr_un target{};
+    target.sun_family = AF_UNIX;
+    constexpr char path[] = "/run/pocketnet-control/control.sock";
+    std::copy(std::begin(path), std::end(path), target.sun_path);
+    if (connect(channel.descriptor, reinterpret_cast<const sockaddr*>(&target), sizeof(target)) != 0) return {};
+    const auto request = input.dump() + "\n";
+    if (send(channel.descriptor, request.data(), request.size(), MSG_NOSIGNAL) !=
+        static_cast<ssize_t>(request.size())) return {};
+    std::string reply;
+    while (reply.size() < 1024) {
+        std::array<char, 256> bytes{};
+        const auto count = recv(channel.descriptor, bytes.data(), bytes.size(), 0);
+        if (count <= 0) break;
+        reply.append(bytes.data(), count);
+        if (reply.find('\n') != std::string::npos) break;
     }
-    return result;
+    return Json::parse(reply, nullptr, false);
+}
+
+v1::ComponentState component_state(const Json& units, const char* first, const char* second,
+                                   bool interface_ready, v1::ComponentState ready) {
+    const auto a = text(units, first);
+    const auto b = text(units, second);
+    if (a == "failed" || b == "failed") return v1::FAILED;
+    if (a.empty() || b.empty() || a == "unknown" || b == "unknown") return v1::UNKNOWN;
+    if (a == "activating" || b == "activating") return v1::STARTING;
+    return a == "active" && b == "active" && interface_ready ? ready : v1::DEGRADED;
 }
 }  // namespace
 
@@ -71,31 +92,7 @@ v1::ControlCommandResponse run_control(const char* action, const std::string& re
     result.set_status(v1::REFUSED);
     result.set_accepted(false);
     result.set_reason("local_control_unavailable");
-    struct Socket {
-        int descriptor = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-        ~Socket() { if (descriptor >= 0) close(descriptor); }
-    } channel;
-    if (channel.descriptor < 0) return result;
-    const timeval deadline{2, 0};
-    setsockopt(channel.descriptor, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline));
-    setsockopt(channel.descriptor, SOL_SOCKET, SO_SNDTIMEO, &deadline, sizeof(deadline));
-    sockaddr_un target{};
-    target.sun_family = AF_UNIX;
-    constexpr char path[] = "/run/pocketnet-control/control.sock";
-    std::copy(std::begin(path), std::end(path), target.sun_path);
-    if (connect(channel.descriptor, reinterpret_cast<const sockaddr*>(&target), sizeof(target)) != 0) return result;
-    const auto request = Json{{"action", action}, {"request_id", request_id}}.dump() + "\n";
-    if (send(channel.descriptor, request.data(), request.size(), MSG_NOSIGNAL) !=
-        static_cast<ssize_t>(request.size())) return result;
-    std::string reply;
-    while (reply.size() < 1024) {
-        std::array<char, 256> bytes{};
-        const auto count = recv(channel.descriptor, bytes.data(), bytes.size(), 0);
-        if (count <= 0) break;
-        reply.append(bytes.data(), count);
-        if (reply.find('\n') != std::string::npos) break;
-    }
-    const auto doc = Json::parse(reply, nullptr, false);
+    const auto doc = local_request({{"action", action}, {"request_id", request_id}}, {2, 0});
     if (!doc.is_object()) return result;
     const auto status = text(doc, "status");
     const auto reason = text(doc, "reason");
@@ -134,7 +131,8 @@ v1::CapturePolicyStatus capture_policy() {
 
 void add_component_health(v1::MonitoringSnapshot& snapshot) {
     const auto control = state_file(control_state);
-    const auto units = unit_health();
+    const auto response = local_request({{"action", "health"}}, {1, 0});
+    const auto units = text(response, "status") == "ok" ? response.value("units", Json{}) : Json{};
     const auto component = [&](v1::ComponentId id, v1::ComponentState state, const std::string& reason) {
         auto* health = snapshot.mutable_device_health()->add_components();
         health->set_component_id(id);
@@ -150,9 +148,9 @@ void add_component_health(v1::MonitoringSnapshot& snapshot) {
             if (health->recovery_phase() == "failed" && !detail.empty()) health->set_reason(detail);
         }
     };
-    const bool mgmt = units[0] == "active" && units[1] == "active" && mgmt_ip();
-    component(v1::MGMT_WIFI, mgmt ? v1::READY : (units[0].empty() ? v1::UNKNOWN : v1::DEGRADED),
-              mgmt ? "" : "hotspot_or_dhcp_not_verified");
+    const auto mgmt = component_state(units, "piagent-hotspot.service", "piagent-dhcp.service", mgmt_ip(), v1::READY);
+    component(v1::MGMT_WIFI, mgmt,
+              mgmt == v1::READY ? "" : (mgmt == v1::UNKNOWN ? "service_status_unavailable" : "hotspot_or_dhcp_not_verified"));
     const auto& capture = snapshot.capture();
     const auto& role = capture.datasource_state();
     component(v1::MONITOR_WIFI, role == "ready" && capture.coverage() == "live_monitor_active" ? v1::READY :
@@ -163,9 +161,9 @@ void add_component_health(v1::MonitoringSnapshot& snapshot) {
          !error && it != end; it.increment(error)) {
         if (it->path().filename().string().find("hci") == 0) adapter = true;
     }
-    const bool ble = adapter && units[2] == "active" && units[3] == "active";
-    component(v1::BLE, ble ? v1::IDLE : (units[2].empty() ? v1::UNKNOWN : v1::DEGRADED),
-              ble ? "" : "bluetooth_or_gatt_not_verified");
+    const auto ble = component_state(units, "bluetooth.service", "piagent-ble-time-sync.service", adapter, v1::IDLE);
+    component(v1::BLE, ble,
+              ble == v1::IDLE ? "" : (ble == v1::UNKNOWN ? "service_status_unavailable" : "bluetooth_or_gatt_not_verified"));
 }
 
 }  // namespace pocketnet::telemetry

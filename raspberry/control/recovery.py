@@ -23,6 +23,10 @@ CONTROL = Path("/run/pocketnet-control")
 CONFIG = Path("/etc/piagent-kismet/monitor.json")
 MONITOR = Path("/run/piagent-wireless/monitor.json")
 ACTIONS = {*PROFILES, "pressure_light", "monitor", "check_hotspot", "hotspot", "ble"}
+HEALTH_UNITS = ("piagent-hotspot.service", "piagent-dhcp.service",
+                "bluetooth.service", "piagent-ble-time-sync.service")
+UNIT_STATES = {"active", "inactive", "failed", "activating", "deactivating",
+               "reloading", "maintenance", "refreshing", "unknown"}
 
 
 def read_object(path):
@@ -53,9 +57,20 @@ def reply(status, reason=""):
     print(json.dumps({"status": status, "reason": reason}), flush=True)
 
 
-def command(path, *args):
+def command(path, *args, timeout=4):
     return subprocess.run([path, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                          text=True, timeout=4, check=False)
+                          text=True, timeout=timeout, check=False)
+
+
+def report_health():
+    try:
+        result = command("/usr/bin/systemctl", "is-active", *HEALTH_UNITS, timeout=0.75)
+    except (OSError, subprocess.SubprocessError):
+        return reply("unavailable", "service_status_unavailable")
+    states = result.stdout.split()
+    if len(states) != len(HEALTH_UNITS) or any(state not in UNIT_STATES for state in states):
+        return reply("unavailable", "service_status_unavailable")
+    print(json.dumps({"status": "ok", "units": dict(zip(HEALTH_UNITS, states))}), flush=True)
 
 
 def active(unit):
@@ -226,6 +241,9 @@ def main():
         if not line.endswith(b"\n"):
             return reply("refused", "invalid_control_request")
         data = json.loads(line)
+        # This fixed, read-only request does not take the recovery lock or update its state.
+        if isinstance(data, dict) and data.get("action") == "health" and set(data) == {"action"}:
+            return report_health()
         action, request_id = data["action"], data["request_id"]
         if not isinstance(action, str) or action not in ACTIONS or not isinstance(request_id, str):
             return reply("unsupported", "unknown_action")
