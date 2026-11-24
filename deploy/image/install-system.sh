@@ -24,6 +24,7 @@ for executable in /opt/pocketnet/python/bin/python3.12 /usr/bin/kismet /usr/bin/
 done
 
 install -d -m 0755 "$root/etc/pocketnet" "$root/etc/sysusers.d" "$root/etc/hostapd"
+install -m 0644 "$source_dir/deploy/image/usb-monitor.conf" "$root/etc/pocketnet/usb-monitor.conf"
 install -D -m 0755 "$source_dir/deploy/image/firstboot.sh" "$root/usr/local/lib/pocketnet/firstboot.sh"
 install -m 0644 "$source_dir/deploy/image/firstboot.service" "$unit_dir/pocketnet-firstboot.service"
 install -m 0644 "$source_dir/deploy/systemd/piagent-hotspot.service" \

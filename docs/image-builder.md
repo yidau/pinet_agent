@@ -40,7 +40,7 @@
 
 镜像和 SSH 升级都安装 32 MiB 的 volatile journald 配置和 64 MiB 的 `/tmp` tmpfs 单元。就地升级后，`/tmp` 在下一次启动时切换。Ubuntu 的 `/run` 与 `/dev/shm` 作为 RAM 运行目录，本次不迁移 `/var/lib` 或添加 swap。真实 SD 卡写入量、网卡和手机通信由实机验收确认。
 
-需要预配外接 USB 监听网卡时，在目标镜像的 /etc/pocketnet/usb-monitor.conf 中填写一行“接口名 USB 厂商 ID USB 产品 ID USB 端口 驱动名”。永久注册二维码生成在 /root/piagent-enrollment.svg。
+镜像默认将 `deploy/image/usb-monitor.conf` 写入 `/etc/pocketnet/usb-monitor.conf`，预设为 `wlx90de80fb0e0e 0e8d 7612 1-1.3 mt76x2u`。首次开机前把这块 MT7612U 接到原 USB 端口，系统会尝试绑定为 `pn-wifi0` 并启用监听。网卡缺失或身份不匹配时，首次初始化继续，之后可通过有线 SSH 手动绑定。永久注册二维码生成在 `/root/piagent-enrollment.svg`。
 
 可在 Ubuntu 22.04 WSL2 离线检查已经生成的镜像。
 

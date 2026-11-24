@@ -93,6 +93,7 @@ done
 if [[ "$ENABLE_FIRST_BOOT" == true ]]; then
     systemctl --root="$root" is-enabled pocketnet-firstboot.service
 fi
+cmp -s "$repo/deploy/image/usb-monitor.conf" "$root/etc/pocketnet/usb-monitor.conf"
 [[ ! -e "$root/etc/systemd/system/piagent-mcp.service" && ! -e "$root$app/raspberry/mcp_server" ]]
 [[ ! -e "$root/var/lib/piagent-devices/devices.sqlite3" ]]
 if [[ "$ENABLE_SSH" == true ]]; then

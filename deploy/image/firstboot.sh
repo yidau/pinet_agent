@@ -141,13 +141,16 @@ systemctl start piagent-clock.socket piagent-enrollment-wifi.socket piagent-ble-
 
 "$python" raspberry/config/kismet/configure.py --runtime-only
 if [[ -f /etc/pocketnet/usb-monitor.conf && ! -e /etc/piagent-kismet/monitor.json ]]; then
-    read -r interface vendor product port driver extra < /etc/pocketnet/usb-monitor.conf
-    [[ -n "$driver" && -z "$extra" ]]
-    "$python" raspberry/config/kismet/configure_monitor.py --runtime-only \
-        --interface "$interface" --vendor "$vendor" --product "$product" --port "$port" --driver "$driver"
-    udevadm control --reload
-    udevadm trigger --action=add "/sys/class/net/$interface"
-    systemctl restart piagent-kismet.service
+    if read -r interface vendor product port driver extra < /etc/pocketnet/usb-monitor.conf &&
+        [[ -n "$driver" && -z "$extra" ]] &&
+        "$python" raspberry/config/kismet/configure_monitor.py --runtime-only \
+            --interface "$interface" --vendor "$vendor" --product "$product" --port "$port" --driver "$driver"; then
+        udevadm control --reload
+        udevadm trigger --action=add "/sys/class/net/$interface"
+        systemctl restart piagent-kismet.service
+    else
+        echo 'USB monitor preset could not be applied. Continuing PocketNet initialization.' >&2
+    fi
 fi
 if [[ -f /etc/piagent-kismet/monitor.json ]]; then
     systemctl enable --now piagent-wireless-manager.service
