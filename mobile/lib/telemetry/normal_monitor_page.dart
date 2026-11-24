@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:grpc/grpc.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../active_lab/radio_lab_page.dart';
 import '../ui/console_style.dart';
 import 'dashboard_page.dart';
 import 'message_repository.dart';
@@ -586,6 +587,21 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
             for (final client in clients)
               _fact(client.mac, formatTelemetryTime(client.lastSeenMs)),
             if (_notice case final notice? when notice.isNotEmpty) Text(notice),
+            if (ap.ssid.isNotEmpty && _connection.supportsRadioLab)
+              FilledButton.icon(
+                icon: const Icon(Icons.shield_outlined),
+                label: const Text('查看授权无线安全验证'),
+                onPressed: _closed || !_online || _paused || _pauseRequested
+                    ? null
+                    : () => unawaited(Navigator.of(context).push<void>(
+                          MaterialPageRoute(builder: (_) => RadioLabPage(
+                            connection: _connection,
+                            bssid: ap.bssid,
+                            ssid: ap.ssid,
+                            channel: ap.channel,
+                          )),
+                        )),
+              ),
             OutlinedButton(
               onPressed: _closed ? null : () => _toggleWatch(bssid),
               child: Text(_watch.contains(bssid) ? '取消关注此 BSSID' : '关注此 BSSID'),

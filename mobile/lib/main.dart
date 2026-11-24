@@ -57,7 +57,7 @@ class _PocketNetHomeState extends State<PocketNetHome>
     with WidgetsBindingObserver {
   final _telemetry = TelemetryConnection();
   EnrollmentProfile? _profile;
-  int _tab = 0;
+  int _tab = 1;
   bool _loading = true;
   bool _profileError = false;
   TelemetryPhase _shownPhase = TelemetryPhase.stopped;
