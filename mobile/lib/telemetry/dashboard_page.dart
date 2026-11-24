@@ -24,45 +24,69 @@ class DashboardPage extends StatelessWidget {
     listenable: connection,
     builder: (context, _) {
       final snapshot = connection.snapshot;
-      return ListView(
-        key: const PageStorageKey('telemetry-dashboard'),
-        padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
-        children: [
-          ConsoleHeading(
-            '仪表盘',
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (!_online && connection.isConfigured)
-                  IconButton(
-                    tooltip: '重新连接',
-                    onPressed: connection.reconnect,
-                    icon: const Icon(Icons.refresh),
-                  ),
-                IconButton(
-                  tooltip: connection.unreadCount == 0
-                      ? '消息中心'
-                      : '消息中心，${connection.unreadCount} 条未读',
-                  onPressed: onOpenMessages,
-                  icon: Badge(
-                    isLabelVisible: connection.unreadCount > 0,
-                    label: Text('${connection.unreadCount}'),
-                    child: const Icon(Icons.notifications_outlined),
-                  ),
-                ),
-              ],
+      final header = ConsoleHeading(
+        '仪表盘',
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!_online && connection.isConfigured)
+              IconButton(
+                tooltip: '重新连接',
+                onPressed: connection.reconnect,
+                icon: const Icon(Icons.refresh),
+              ),
+            IconButton(
+              tooltip: connection.unreadCount == 0
+                  ? '消息中心'
+                  : '消息中心，${connection.unreadCount} 条未读',
+              onPressed: onOpenMessages,
+              icon: Badge(
+                isLabelVisible: connection.unreadCount > 0,
+                label: Text('${connection.unreadCount}'),
+                child: const Icon(Icons.notifications_outlined),
+              ),
+            ),
+          ],
+        ),
+      );
+      final sections = snapshot == null
+          ? [
+              header,
+              Text(connection.isConfigured ? '等待遥测连接。' : '扫码注册树莓派后，将自动接收遥测数据。'),
+            ]
+          : [
+              header,
+              _wireless(context, snapshot),
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: _system(context, snapshot),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: _components(context, snapshot),
+              ),
+            ];
+      const padding = EdgeInsets.fromLTRB(16, 6, 16, 12);
+      return LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          key: const PageStorageKey('telemetry-dashboard'),
+          padding: padding,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: snapshot == null || !constraints.hasBoundedHeight
+                  ? 0
+                  : (constraints.maxHeight - padding.vertical).clamp(
+                      0.0,
+                      double.infinity,
+                    ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: sections,
             ),
           ),
-          if (snapshot == null)
-            Text(connection.isConfigured ? '等待遥测连接。' : '扫码注册树莓派后，将自动接收遥测数据。')
-          else ...[
-            _wireless(context, snapshot),
-            const SizedBox(height: 10),
-            _system(context, snapshot),
-            const SizedBox(height: 12),
-            _components(context, snapshot),
-          ],
-        ],
+        ),
       );
     },
   );
@@ -93,6 +117,7 @@ class DashboardPage extends StatelessWidget {
   Widget _wireless(BuildContext context, MonitoringSnapshot snapshot) {
     final wireless = snapshot.wireless;
     final capture = snapshot.capture;
+    final observation = snapshot.observationSession;
     final status = !_online
         ? MonitorStatus.unknown
         : capture.datasourceError
@@ -134,6 +159,25 @@ class DashboardPage extends StatelessWidget {
           status,
         ),
         ('数据包/秒', packets?.toString(), status),
+        (
+          '连续观测',
+          observation.active && observation.hasContinuousActiveMs()
+              ? _observationDuration(observation.continuousActiveMs)
+              : null,
+          status,
+        ),
+        (
+          '当前信道',
+          capture.currentChannel.isEmpty ? null : capture.currentChannel,
+          status,
+        ),
+        (
+          '丢弃包',
+          capture.hasDroppedPackets()
+              ? capture.droppedPackets.toString()
+              : null,
+          status,
+        ),
       ],
     );
   }
@@ -151,6 +195,23 @@ class DashboardPage extends StatelessWidget {
             ResourceLevel.LEVEL2_FALLBACK => MonitorStatus.failed,
             _ => MonitorStatus.unknown,
           };
+    final cpuStatus = pressure.reason.startsWith('cpu_')
+        ? status
+        : availability;
+    final memoryStatus =
+        pressure.reason.startsWith('available_memory') ||
+            pressure.reason.startsWith('memory_psi')
+        ? status
+        : availability;
+    final memoryUsed =
+        system.hasMemoryUsedBytes() &&
+            system.hasMemoryTotalBytes() &&
+            system.memoryTotalBytes > Int64.ZERO &&
+            system.memoryUsedBytes <= system.memoryTotalBytes
+        ? 100 *
+              system.memoryUsedBytes.toDouble() /
+              system.memoryTotalBytes.toDouble()
+        : null;
     return _SummaryCard(
       title: '系统资源',
       status: status,
@@ -159,28 +220,36 @@ class DashboardPage extends StatelessWidget {
         (
           'CPU',
           system.hasCpuUsage() ? _number(system.cpuUsage, '%') : null,
-          pressure.reason.startsWith('cpu_') ? status : availability,
+          cpuStatus,
         ),
         (
           '可用内存',
           system.hasMemoryAvailableBytes()
               ? _memory(system.memoryAvailableBytes)
               : null,
-          pressure.reason.startsWith('available_memory') ||
-                  pressure.reason.startsWith('memory_psi')
-              ? status
-              : availability,
+          memoryStatus,
         ),
         (
           '温度',
           system.hasTemperatureC() ? _number(system.temperatureC, ' °C') : null,
-          !fresh || !system.hasTemperatureC()
-              ? MonitorStatus.unknown
-              : switch (system.temperatureC) {
-                  >= 85 => MonitorStatus.failed,
-                  >= 80 => MonitorStatus.limited,
-                  _ => MonitorStatus.normal,
-                },
+          fresh && system.hasTemperatureC()
+              ? _temperatureStatus(system.temperatureC)
+              : MonitorStatus.unknown,
+        ),
+        (
+          'CPU 频率',
+          system.hasCpuFrequencyMhz()
+              ? _number(system.cpuFrequencyMhz, ' MHz', precision: 0)
+              : null,
+          cpuStatus,
+        ),
+        ('内存使用率', _number(memoryUsed, '%'), memoryStatus),
+        (
+          'I/O 压力',
+          system.ioPressure.hasSomeAvg10()
+              ? _number(system.ioPressure.someAvg10, '%')
+              : null,
+          availability,
         ),
       ],
     );
@@ -431,6 +500,19 @@ String _memory(Int64 bytes) {
       : _number(mib, ' MiB', precision: 0);
 }
 
+MonitorStatus _temperatureStatus(double temperature) => switch (temperature) {
+  >= 75 => MonitorStatus.failed,
+  >= 65 => MonitorStatus.limited,
+  _ when temperature.isFinite => MonitorStatus.normal,
+  _ => MonitorStatus.unknown,
+};
+
+String _observationDuration(Int64 milliseconds) {
+  final duration = Duration(milliseconds: milliseconds.toInt());
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${two(duration.inHours)}:${two(duration.inMinutes % 60)}:${two(duration.inSeconds % 60)}';
+}
+
 Widget _detail(String label, String value) => ListTile(
   contentPadding: EdgeInsets.zero,
   visualDensity: VisualDensity.compact,
@@ -460,10 +542,12 @@ List<Widget> _systemDetails(MonitoringSnapshot snapshot) {
         'CPU 温度',
         [
           _number(system.temperatureC, ' °C'),
-          if (system.temperatureC >= 85)
-            '已达树莓派限温'
-          else if (system.temperatureC >= 80)
-            '进入降频温区',
+          switch (_temperatureStatus(system.temperatureC)) {
+            MonitorStatus.failed => '已达 75 °C 告警阈值',
+            MonitorStatus.limited => '已达 65 °C 提醒阈值',
+            MonitorStatus.normal => '正常',
+            MonitorStatus.unknown => '未知',
+          },
         ].join(' · '),
       ),
     _detail(
@@ -593,37 +677,62 @@ class _SummaryCard extends StatelessWidget {
               padding: EdgeInsets.symmetric(vertical: 7),
               child: Divider(),
             ),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (final (label, value, state) in readings)
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+            LayoutBuilder(
+              builder: (context, constraints) {
+                const gap = 8.0;
+                final scale = MediaQuery.textScalerOf(context);
+                final columns = constraints.maxWidth >= scale.scale(245)
+                    ? 3
+                    : constraints.maxWidth >= scale.scale(165)
+                    ? 2
+                    : 1;
+                final width =
+                    (constraints.maxWidth - (columns - 1) * gap) / columns;
+                return Wrap(
+                  spacing: gap,
+                  runSpacing: 8,
+                  children: [
+                    for (final (label, value, state) in readings)
+                      SizedBox(
+                        width: width,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            (value == null || value == '未报告'
-                                    ? MonitorStatus.unknown
-                                    : state)
-                                .indicator(context, size: 13),
-                            const SizedBox(width: 3),
-                            Flexible(
-                              child: Text(
-                                label,
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
+                            Row(
+                              children: [
+                                (value == null || value == '未报告'
+                                        ? MonitorStatus.unknown
+                                        : state)
+                                    .indicator(context, size: 13),
+                                const SizedBox(width: 3),
+                                Flexible(
+                                  child: Text(
+                                    label,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Text(
+                              value ?? '未报告',
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(
+                                    color:
+                                        value != null &&
+                                            (state == MonitorStatus.limited ||
+                                                state == MonitorStatus.failed)
+                                        ? state.color(context)
+                                        : null,
+                                  ),
                             ),
                           ],
                         ),
-                        Text(
-                          value ?? '未报告',
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
+                      ),
+                  ],
+                );
+              },
             ),
           ],
         ),

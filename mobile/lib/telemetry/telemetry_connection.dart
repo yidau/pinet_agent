@@ -133,6 +133,8 @@ class TelemetryConnection extends ChangeNotifier {
   bool _storageError = false;
   bool _occupied = false;
   bool _backgroundEnabled = false;
+  bool _defaultProfilePending = false;
+  bool _applyingDefaultProfile = false;
   final _clock = Stopwatch()..start();
   int? _snapshotReceivedMs;
   Timer? _freshness;
@@ -149,6 +151,7 @@ class TelemetryConnection extends ChangeNotifier {
   bool get supportsV2 => (_snapshot?.capabilityVersion ?? 0) >= 2;
   bool get occupied => _occupied;
   bool get backgroundEnabled => _backgroundEnabled;
+  bool get applyingDefaultProfile => _applyingDefaultProfile;
   Duration? get snapshotAge => _snapshotReceivedMs == null
       ? null
       : Duration(
@@ -202,6 +205,11 @@ class TelemetryConnection extends ChangeNotifier {
   }
 
   Future<ControlCommandResponse> setProfile(CaptureProfile value) async {
+    _defaultProfilePending = false;
+    return _requestProfile(value);
+  }
+
+  Future<ControlCommandResponse> _requestProfile(CaptureProfile value) async {
     final transport = _transport;
     if (!supportsV2 || transport is! _GrpcTransport) {
       throw StateError('设备尚未提供采集档位');
@@ -214,6 +222,45 @@ class TelemetryConnection extends ChangeNotifier {
       ),
       options: transport.unaryOptions,
     );
+  }
+
+  Future<void> applyDefaultCaptureProfile() async {
+    final snapshot = _snapshot;
+    if (!_defaultProfilePending ||
+        !_foreground ||
+        _phase != TelemetryPhase.live ||
+        stale ||
+        !supportsV2 ||
+        snapshot == null) {
+      return;
+    }
+    final policy = snapshot.capturePolicy;
+    if (policy.pressureForced ||
+        snapshot.resourcePressure.level == ResourceLevel.LEVEL2_FALLBACK) {
+      _defaultProfilePending = false;
+      return;
+    }
+    if (policy.phase == 'switching' ||
+        !const {'light', 'balanced', 'extended'}.contains(policy.actual)) {
+      return;
+    }
+    _defaultProfilePending = false;
+    if (policy.actual == 'extended') return;
+
+    final generation = _generation;
+    _applyingDefaultProfile = true;
+    notifyListeners();
+    try {
+      if (!_isCurrent(generation)) return;
+      await _requestProfile(CaptureProfile.EXTENDED);
+    } catch (_) {
+      // A later automatic stream retry is part of the same monitoring session.
+    } finally {
+      if (_isCurrent(generation)) {
+        _applyingDefaultProfile = false;
+        notifyListeners();
+      }
+    }
   }
 
   Future<ControlCommandResponse> recover(
@@ -320,6 +367,7 @@ class TelemetryConnection extends ChangeNotifier {
     final target = _target;
     if (target == null) return;
     _endTransport();
+    _defaultProfilePending = true;
     _backoffSeconds = 1;
     _phase = TelemetryPhase.connecting;
     notifyListeners();
@@ -391,6 +439,12 @@ class TelemetryConnection extends ChangeNotifier {
           throw const FormatException('Unsupported telemetry schema.');
         }
         final previous = _snapshot;
+        if (previous != null &&
+            previous.deviceBootId.isNotEmpty &&
+            snapshot.deviceBootId.isNotEmpty &&
+            previous.deviceBootId != snapshot.deviceBootId) {
+          _defaultProfilePending = true;
+        }
         if (_phase != TelemetryPhase.live ||
             previous == null ||
             previous.bootId != snapshot.bootId ||
@@ -588,6 +642,7 @@ class TelemetryConnection extends ChangeNotifier {
 
   void _endTransport() {
     _generation++;
+    _applyingDefaultProfile = false;
     _retry?.cancel();
     _retry = null;
     _freshness?.cancel();

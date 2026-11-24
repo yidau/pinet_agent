@@ -55,6 +55,7 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
       ResourceLevel.LEVEL2_FALLBACK;
   bool get _switching =>
       _setting ||
+      _connection.applyingDefaultProfile ||
       _awaited != null ||
       _connection.snapshot?.capturePolicy.phase == 'switching';
   String? get _actual => _connection.snapshot?.capturePolicy.actual;

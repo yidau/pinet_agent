@@ -11,6 +11,7 @@ import 'telemetry/message_page.dart';
 import 'telemetry/monitoring_widgets.dart';
 import 'telemetry/normal_monitor_page.dart';
 import 'telemetry/telemetry_connection.dart';
+import 'time_sync/automatic_time_sync.dart';
 import 'time_sync/time_sync_screen.dart';
 import 'ui/console_style.dart';
 
@@ -61,6 +62,12 @@ class _PocketNetHomeState extends State<PocketNetHome>
   bool _profileError = false;
   TelemetryPhase _shownPhase = TelemetryPhase.stopped;
   bool _shownRequested = false;
+  final _clockStatus = ValueNotifier('等待设备连接');
+  AutomaticTimeSync? _automaticClock;
+  Future<void>? _clockTask;
+  bool _clockPending = false;
+  bool _foreground = true;
+  bool _bleScreenOpen = false;
 
   @override
   void initState() {
@@ -74,28 +81,88 @@ class _PocketNetHomeState extends State<PocketNetHome>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _telemetry.removeListener(_changed);
+    _automaticClock?.cancel();
+    _clockStatus.dispose();
     _telemetry.dispose();
     super.dispose();
   }
 
   void _changed() {
+    if (!mounted) return;
+    final phase = _telemetry.phase;
+    if (_shownPhase != phase) {
+      _clockPending = phase == TelemetryPhase.live;
+      if (!_clockPending) _automaticClock?.cancel();
+      _clockStatus.value = _clockPending ? '等待自动校时' : '等待设备连接';
+    }
+    if (_shownPhase != phase || _shownRequested != _telemetry.isRequested) {
+      setState(() {
+        _shownPhase = phase;
+        _shownRequested = _telemetry.isRequested;
+      });
+    }
+    _runConnectionSetup();
+  }
+
+  void _runConnectionSetup() {
+    final profile = _profile;
     if (!mounted ||
-        (_shownPhase == _telemetry.phase &&
-            _shownRequested == _telemetry.isRequested)) {
+        !_foreground ||
+        _bleScreenOpen ||
+        profile == null ||
+        _telemetry.phase != TelemetryPhase.live ||
+        _telemetry.stale ||
+        _automaticClock != null) {
       return;
     }
-    setState(() {
-      _shownPhase = _telemetry.phase;
-      _shownRequested = _telemetry.isRequested;
-    });
+    if (_clockPending) {
+      _clockPending = false;
+      final clock = AutomaticTimeSync();
+      _automaticClock = clock;
+      _clockStatus.value = '正在自动校时…';
+      _clockTask = _synchronizeConnectedClock(clock, profile);
+      return;
+    }
+    unawaited(_telemetry.applyDefaultCaptureProfile());
+  }
+
+  Future<void> _synchronizeConnectedClock(
+    AutomaticTimeSync clock,
+    EnrollmentProfile profile,
+  ) async {
+    final result = await clock.synchronize(profile);
+    if (!mounted) return;
+    _automaticClock = null;
+    _clockTask = null;
+    if (!_clockPending &&
+        _telemetry.phase == TelemetryPhase.live &&
+        identical(profile, _profile)) {
+      _clockStatus.value = switch (result) {
+        AutomaticTimeSyncResult.aligned => '树莓派与手机时间已对齐',
+        AutomaticTimeSyncResult.synchronized => '自动校时成功',
+        AutomaticTimeSyncResult.confirmBackward => '树莓派时间超前，请打开蓝牙校时确认回拨',
+        AutomaticTimeSyncResult.bluetoothUnavailable => '蓝牙未就绪，请核对蓝牙开关和权限',
+        AutomaticTimeSyncResult.deviceUnavailable => '暂时无法通过蓝牙验证或校准树莓派',
+        AutomaticTimeSyncResult.unconfirmed => '暂时无法确认校时结果',
+        AutomaticTimeSyncResult.cancelled => '自动校时已中断',
+      };
+    }
+    _runConnectionSetup();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      _foreground = true;
       _telemetry.setForeground(true);
+      _runConnectionSetup();
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _foreground = false;
+      if (_automaticClock != null && _telemetry.phase == TelemetryPhase.live) {
+        _clockPending = true;
+        _automaticClock?.cancel();
+      }
       _telemetry.setForeground(false);
     }
   }
@@ -103,7 +170,9 @@ class _PocketNetHomeState extends State<PocketNetHome>
   Future<void> _restore() async {
     if (Platform.isAndroid || Platform.isIOS) {
       try {
-        _profile = await EnrollmentProfile.load();
+        final restored = await EnrollmentProfile.load();
+        if (!mounted) return;
+        _profile = restored;
         if (_profile case final profile?) {
           _telemetry.useTarget(TelemetryTarget.fromEnrollment(profile));
         }
@@ -123,18 +192,29 @@ class _PocketNetHomeState extends State<PocketNetHome>
   }
 
   Future<void> _openEnrollment() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) =>
-            EnrollmentScreen(profile: _profile, onRegistered: _registered),
-      ),
+    await _openBleScreen(
+      (_) => EnrollmentScreen(profile: _profile, onRegistered: _registered),
     );
   }
 
   Future<void> _openTimeSync() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(builder: (_) => TimeSyncScreen(profile: _profile)),
-    );
+    await _openBleScreen((_) => TimeSyncScreen(profile: _profile));
+  }
+
+  Future<void> _openBleScreen(WidgetBuilder builder) async {
+    if (_bleScreenOpen) return;
+    _bleScreenOpen = true;
+    _clockPending = false;
+    _automaticClock?.cancel();
+    try {
+      await _clockTask;
+      if (!mounted) return;
+      await Navigator.of(context)
+          .push<void>(MaterialPageRoute(builder: builder));
+    } finally {
+      _bleScreenOpen = false;
+      _runConnectionSetup();
+    }
   }
 
   void _disconnectTelemetry() {
@@ -202,6 +282,14 @@ class _PocketNetHomeState extends State<PocketNetHome>
                     ListTile(
                       leading: connectionStatus.indicator(context),
                       title: Text(connectionLabel),
+                    ),
+                    ValueListenableBuilder<String>(
+                      valueListenable: _clockStatus,
+                      builder: (context, status, _) => ListTile(
+                        leading: const Icon(Icons.schedule),
+                        title: const Text('自动校时'),
+                        subtitle: Text(status),
+                      ),
                     ),
                   ],
                 ),

@@ -15,6 +15,7 @@ import 'package:piagent/telemetry/message_repository.dart';
 import 'package:piagent/telemetry/normal_monitor_page.dart';
 import 'package:piagent/telemetry/proto/monitoring.pbgrpc.dart';
 import 'package:piagent/telemetry/telemetry_connection.dart';
+import 'package:piagent/time_sync/automatic_time_sync.dart';
 import 'package:piagent/ui/console_style.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' as ffi;
 import 'package:sqlite3/open.dart' as sqlite;
@@ -78,8 +79,50 @@ void main() {
       expect(service.deviceId, profile.phoneId);
       expect(feed.snapshot!.bootId, 'loopback-boot');
       expect(feed.phase, TelemetryPhase.live);
+      await feed.applyDefaultCaptureProfile();
+      await feed.applyDefaultCaptureProfile();
+      expect(service.profileRequests, [CaptureProfile.EXTENDED]);
+      await feed.setProfile(CaptureProfile.LIGHT);
+      await feed.applyDefaultCaptureProfile();
+      expect(service.profileRequests, [
+        CaptureProfile.EXTENDED,
+        CaptureProfile.LIGHT,
+      ]);
+
+      service.policy = CapturePolicyStatus(
+        actual: 'light',
+        pressureForced: true,
+      );
+      feed.reconnect();
+      await _until(() => feed.phase == TelemetryPhase.live);
+      await feed.applyDefaultCaptureProfile();
+      expect(service.profileRequests.length, 2);
+
+      service.policy = CapturePolicyStatus(actual: 'light');
+      feed.reconnect();
+      await _until(() => feed.phase == TelemetryPhase.live);
+      await feed.setProfile(CaptureProfile.BALANCED);
+      await feed.applyDefaultCaptureProfile();
+      expect(service.profileRequests, [
+        CaptureProfile.EXTENDED,
+        CaptureProfile.LIGHT,
+        CaptureProfile.BALANCED,
+      ]);
     },
   );
+
+  test('automatic BLE time sync skips small offsets and preserves backward confirmation', () {
+    expect(automaticTimeSyncWithoutWrite(-501), isNull);
+    expect(
+      automaticTimeSyncWithoutWrite(-500),
+      AutomaticTimeSyncResult.aligned,
+    );
+    expect(automaticTimeSyncWithoutWrite(500), AutomaticTimeSyncResult.aligned);
+    expect(
+      automaticTimeSyncWithoutWrite(501),
+      AutomaticTimeSyncResult.confirmBackward,
+    );
+  });
 
   testWidgets('reserved tabs show a placeholder without device actions', (
     tester,
@@ -284,8 +327,15 @@ void main() {
               sequence: Int64(1),
               schemaVersion: 1,
               timestampMs: now,
-              system: SystemMetrics(cpuUsage: 22, sampledAtMs: now),
-              capture: CaptureMetrics(datasourceState: 'degraded'),
+              system: SystemMetrics(
+                cpuUsage: 22,
+                temperatureC: 65,
+                sampledAtMs: now,
+              ),
+              capture: CaptureMetrics(
+                datasourceState: 'degraded',
+                currentChannel: '36',
+              ),
               deviceHealth: DeviceHealth(
                 components: [
                   ComponentHealth(
@@ -311,6 +361,28 @@ void main() {
     );
     expect(find.text('设备在线，监听受限'), findsOneWidget);
     expect(find.text('22.0%'), findsOneWidget);
+    expect(find.text('CPU 频率'), findsOneWidget);
+    expect(find.text('当前信道'), findsOneWidget);
+    final temperatureRow = find
+        .ancestor(of: find.text('温度'), matching: find.byType(Row))
+        .first;
+    Finder temperatureIcon(IconData icon) =>
+        find.descendant(of: temperatureRow, matching: find.byIcon(icon));
+    expect(temperatureIcon(Icons.warning_rounded), findsOneWidget);
+    final hotter = feed.snapshot!.deepCopy()..sequence = Int64(2);
+    hotter.system.temperatureC = 75;
+    await tester.runAsync(() async {
+      transport.frames.add(TelemetryMessage(snapshot: hotter));
+      await _until(() => feed.snapshot?.sequence == Int64(2));
+    });
+    await tester.pump();
+    expect(temperatureIcon(Icons.error), findsOneWidget);
+
+    await tester.binding.setSurfaceSize(const Size(420, 800));
+    await tester.pumpAndSettle();
+    expect(tester.getBottomLeft(find.text('未知')).dy, greaterThan(770));
+    await tester.binding.setSurfaceSize(const Size(320, 600));
+    await tester.pumpAndSettle();
     expect(find.text('未报告'), findsWidgets);
     expect(find.text('重点接入点'), findsNothing);
     expect(find.textContaining('约每 3 秒'), findsNothing);
@@ -501,6 +573,8 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
   final String token;
   final _finished = Completer<void>();
   String? deviceId;
+  CapturePolicyStatus policy = CapturePolicyStatus(actual: 'light');
+  final profileRequests = <CaptureProfile>[];
 
   void finish() => _finished.complete();
 
@@ -520,7 +594,10 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
   Future<ControlCommandResponse> setCaptureProfile(
     ServiceCall call,
     SetCaptureProfileRequest request,
-  ) async => throw const GrpcError.unimplemented();
+  ) async {
+    profileRequests.add(request.targetProfile);
+    return ControlCommandResponse(requestId: request.requestId, accepted: true);
+  }
 
   @override
   Future<ControlCommandResponse> recoverComponent(
@@ -542,6 +619,8 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
         bootId: 'loopback-boot',
         schemaVersion: 1,
         sequence: Int64(1),
+        capabilityVersion: 2,
+        capturePolicy: policy,
       ),
     );
     await _finished.future;
