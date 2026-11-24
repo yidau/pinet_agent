@@ -149,6 +149,8 @@ class TelemetryConnection extends ChangeNotifier {
   bool get isRequested => _requested;
   int get unreadCount => _messages.where((message) => message.unread).length;
   bool get supportsV2 => (_snapshot?.capabilityVersion ?? 0) >= 2;
+  bool get supportsObservationMode =>
+      _snapshot?.supportedFeatures.contains('observation_mode') ?? false;
   bool get occupied => _occupied;
   bool get backgroundEnabled => _backgroundEnabled;
   bool get applyingDefaultProfile => _applyingDefaultProfile;
@@ -209,6 +211,21 @@ class TelemetryConnection extends ChangeNotifier {
     return _requestProfile(value);
   }
 
+  Future<ControlCommandResponse> setObservationPaused(bool paused) async {
+    final transport = _transport;
+    if (!supportsObservationMode || transport is! _GrpcTransport) {
+      throw StateError('设备尚未提供监听切换');
+    }
+    return transport.service.setObservationMode(
+      SetObservationModeRequest(
+        phoneId: transport.target.phoneId,
+        requestId: _requestId(),
+        paused: paused,
+      ),
+      options: transport.unaryOptions,
+    );
+  }
+
   Future<ControlCommandResponse> _requestProfile(CaptureProfile value) async {
     final transport = _transport;
     if (!supportsV2 || transport is! _GrpcTransport) {
@@ -231,7 +248,9 @@ class TelemetryConnection extends ChangeNotifier {
         _phase != TelemetryPhase.live ||
         stale ||
         !supportsV2 ||
-        snapshot == null) {
+        snapshot == null ||
+        snapshot.capture.observationPauseRequested ||
+        snapshot.capture.datasourceState == 'paused') {
       return;
     }
     final policy = snapshot.capturePolicy;

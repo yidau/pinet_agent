@@ -287,8 +287,9 @@ void Runtime::sample_wireless() {
         if (state != capture_state_) {
             const bool active = result.capture.has_datasource_running() && result.capture.datasource_running() &&
                                 result.capture.coverage() != "unavailable";
-            enqueue(notice(active ? "capture_available" : "capture_degraded",
-                           active ? v1::P2 : v1::P1, "kismet", state));
+            const bool paused = result.capture.datasource_state() == "paused";
+            enqueue(notice(active ? "capture_available" : paused ? "capture_paused" : "capture_degraded",
+                           active ? v1::P2 : paused ? v1::P3 : v1::P1, "kismet", state));
             capture_state_ = state;
         }
 
@@ -456,7 +457,8 @@ void Runtime::publish() {
                 *message.mutable_wireless() = wireless_;
                 message.set_capability_version(2);
                 message.set_device_boot_id(device_boot_id_);
-                for (const char* name : {"device_pages", "capture_profiles", "device_recovery", "highrisk_ack"}) {
+                for (const char* name : {"device_pages", "capture_profiles", "device_recovery", "highrisk_ack",
+                                         "observation_mode"}) {
                     message.add_supported_features(name);
                 }
                 *message.mutable_capture_policy() = policy_;

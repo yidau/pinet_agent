@@ -132,6 +132,8 @@ class DashboardPage extends StatelessWidget {
         ? (connection.stale && connection.phase == TelemetryPhase.live
               ? '快照已过期'
               : '遥测待连接')
+        : capture.datasourceState == 'paused'
+        ? '设备在线，监听已暂停'
         : capture.coverage != 'live_monitor_active'
         ? '设备在线，监听受限'
         : status == MonitorStatus.normal

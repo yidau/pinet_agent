@@ -1,6 +1,8 @@
 """Associate one operator-selected USB radio with the local Kismet instance."""
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import json
 import logging
 import os
@@ -24,12 +26,24 @@ NET = Path("/sys/class/net")
 POLL_SECONDS = 5
 RETRY_SECONDS = 20
 PROFILES = {"light": ("true", "false"), "balanced": ("false", "true"), "extended": ("false", "false")}
-DESIRED_PROFILE = Path("/run/piagent-wireless/desired-profile.json")
+RUNTIME_DIR = Path("/run/piagent-wireless")
+DESIRED_PROFILE = RUNTIME_DIR / "desired-profile.json"
+PAUSE_MARKER = RUNTIME_DIR / "monitor-paused"
 LOG = logging.getLogger(__name__)
 
 
 class Unavailable(Exception):
     pass
+
+
+@contextmanager
+def kismet_operation(*, block=True, directory=RUNTIME_DIR):
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+        yield
+    finally:
+        os.close(descriptor)
 
 
 @dataclass(frozen=True)
@@ -235,6 +249,31 @@ class MonitorManager:
         except KismetError as exc:
             return "degraded", exc.code.lower(), None
 
+    def pause(self):
+        """Confirm that the assigned source is stopped while polling is suspended."""
+        try:
+            sources = self.api.list_sources()
+            row = self.owned_source(sources)
+            if self.source_conflict(sources, row):
+                raise Unavailable("monitor_source_conflict")
+            if row and row.get(FIELD + "running") in (True, 1):
+                if row.get(FIELD + "capture_interface") not in (MONITOR_INTERFACE, MONITOR_VIF):
+                    raise Unavailable("monitor_capture_identity_mismatch")
+                self.api.close_source(self.config.datasource_uuid)
+                sources = self.api.list_sources()
+                row = self.owned_source(sources)
+                if self.source_conflict(sources, row):
+                    raise Unavailable("monitor_source_conflict")
+            if row and row.get(FIELD + "running") not in (False, 0):
+                return "starting", "monitor_waiting_for_stop", None
+            self.last_attempt = float("-inf")
+            self.last_radio = None
+            return "paused", "monitor_operator_paused", None
+        except Unavailable as exc:
+            return "degraded", str(exc), None
+        except KismetError as exc:
+            return "degraded", exc.code.lower(), None
+
     def _check(self):
         try:
             radio = self.detect(self.config)
@@ -323,9 +362,9 @@ class MonitorManager:
         return "starting", "monitor_waiting_for_source", None
 
 
-def write_status(path, state, reason, uuid, profile=None, observation_epoch=None):
+def write_status(path, state, reason, uuid, profile=None, observation_epoch=None, *, pause_requested=False):
     data = {"state": state, "reason": reason, "timestamp_ms": time.time_ns() // 1_000_000,
-            "boottime_ns": time.monotonic_ns()}
+            "boottime_ns": time.monotonic_ns(), "pause_requested": pause_requested}
     if uuid:
         data["datasource_uuid"] = uuid
     if state == "ready" and profile is not None:
@@ -345,7 +384,7 @@ def write_status(path, state, reason, uuid, profile=None, observation_epoch=None
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    status = Path("/run/piagent-wireless/monitor.json")
+    status = RUNTIME_DIR / "monitor.json"
     credentials = Path(os.environ["CREDENTIALS_DIRECTORY"])
     try:
         config = MonitorConfig(**json.loads((credentials / "monitor.json").read_text(encoding="utf-8")))
@@ -362,18 +401,28 @@ def main():
     observation_epoch = None
     try:
         while not stop.is_set():
-            state = manager.check() if manager else ("degraded", "monitor_config_invalid", None)
-            if state != previous:
-                LOG.info("Wi-Fi datasource %s (%s)", state[0], state[1])
-                previous = state
-            if state[0] == "ready":
-                observation_epoch = f"{manager_epoch}:{manager.last_radio.ifindex}"
-            write_status(status, *state, manager.profile if manager else None, observation_epoch)
+            with kismet_operation():
+                paused = PAUSE_MARKER.is_file()
+                if manager is None:
+                    state = ("degraded", "monitor_config_invalid", None)
+                else:
+                    state = manager.pause() if paused else manager.check()
+                if state != previous:
+                    LOG.info("Wi-Fi datasource %s (%s)", state[0], state[1])
+                    previous = state
+                if state[0] == "ready":
+                    observation_epoch = f"{manager_epoch}:{manager.last_radio.ifindex}"
+                elif state[0] == "paused" and observation_epoch is not None:
+                    manager_epoch = uuid4().hex
+                    observation_epoch = None
+                write_status(status, *state, manager.profile if manager else None, observation_epoch,
+                             pause_requested=paused)
             stop.wait(POLL_SECONDS)
     finally:
         if manager:
             try:
-                manager.close()
+                with kismet_operation():
+                    manager.close()
             except (KismetError, Unavailable):
                 LOG.warning("Could not close the assigned Kismet datasource during shutdown.")
 

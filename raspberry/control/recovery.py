@@ -13,8 +13,8 @@ import time
 
 from raspberry.config.kismet.configure import ENV, read_fields
 from raspberry.wireless.wireless_manager import (
-    DESIRED_PROFILE, FIELD, PROFILES, MonitorApi, MonitorConfig, MonitorManager,
-    Unavailable, actual_profile, select_radio,
+    DESIRED_PROFILE, FIELD, PAUSE_MARKER, PROFILES, MonitorApi, MonitorConfig, MonitorManager,
+    Unavailable, actual_profile, kismet_operation, select_radio,
 )
 from raspberry.wireless.kismet_adapter import KismetError
 
@@ -22,7 +22,8 @@ from raspberry.wireless.kismet_adapter import KismetError
 CONTROL = Path("/run/pocketnet-control")
 CONFIG = Path("/etc/piagent-kismet/monitor.json")
 MONITOR = Path("/run/piagent-wireless/monitor.json")
-ACTIONS = {*PROFILES, "pressure_light", "monitor", "check_hotspot", "hotspot", "ble"}
+MONITOR_MODE_ACTIONS = {"pause_monitor", "resume_monitor"}
+ACTIONS = {*PROFILES, *MONITOR_MODE_ACTIONS, "pressure_light", "monitor", "check_hotspot", "hotspot", "ble"}
 HEALTH_UNITS = ("piagent-hotspot.service", "piagent-dhcp.service",
                 "bluetooth.service", "piagent-ble-time-sync.service")
 UNIT_STATES = {"active", "inactive", "failed", "activating", "deactivating",
@@ -123,15 +124,16 @@ def prepare_profile(profile):
 
 def rebuild(profile, state, config, radio):
     # Recheck ownership and radio identity just before changing the instance.
-    current_config, current_radio, _ = monitor_access()
-    if current_config != config or current_radio != radio:
-        raise Unavailable("monitor_identity_changed")
-    prepare_profile(profile)
-    state["recovery_phase"] = "recovering"
-    replace_json(CONTROL / "state.json", state)
-    before_restart = time.monotonic_ns()
-    if not restart("piagent-kismet.service"):
-        return False
+    with kismet_operation():
+        current_config, current_radio, _ = monitor_access()
+        if current_config != config or current_radio != radio:
+            raise Unavailable("monitor_identity_changed")
+        prepare_profile(profile)
+        state["recovery_phase"] = "recovering"
+        replace_json(CONTROL / "state.json", state)
+        before_restart = time.monotonic_ns()
+        if not restart("piagent-kismet.service"):
+            return False
     state["recovery_phase"] = "verifying"
     replace_json(CONTROL / "state.json", state)
 
@@ -207,10 +209,28 @@ def handle(action, request_id, path):
         recent = state.get("recent", {})
         if request_id in recent:
             return reply("accepted", "request_already_processed")
+        if action in MONITOR_MODE_ACTIONS:
+            try:
+                with kismet_operation(block=False):
+                    if action == "pause_monitor":
+                        replace_json(PAUSE_MARKER, {"paused": True})
+                    else:
+                        PAUSE_MARKER.unlink(missing_ok=True)
+            except BlockingIOError:
+                return reply("busy", "monitor_operation_busy")
+            except OSError:
+                return reply("refused", "monitor_control_unavailable")
+            recent = dict(list(recent.items())[-15:])
+            recent[request_id] = time.monotonic()
+            state["recent"] = recent
+            replace_json(path / "state.json", state)
+            return reply("accepted")
         now = time.monotonic()
         if now - state.get("issued_at", -60) < 8 and action != "pressure_light":
             return reply("busy", "control_cooldown")
         if action in PROFILES or action in ("pressure_light", "monitor"):
+            if PAUSE_MARKER.exists():
+                return reply("refused", "monitor_operator_paused")
             try:
                 monitor_access()
             except Unavailable as exc:

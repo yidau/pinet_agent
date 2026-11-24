@@ -154,7 +154,7 @@ void add_component_health(v1::MonitoringSnapshot& snapshot) {
     const auto& capture = snapshot.capture();
     const auto& role = capture.datasource_state();
     component(v1::MONITOR_WIFI, role == "ready" && capture.coverage() == "live_monitor_active" ? v1::READY :
-              (role == "starting" ? v1::STARTING : v1::DEGRADED), capture.reason());
+              (role == "paused" ? v1::IDLE : role == "starting" ? v1::STARTING : v1::DEGRADED), capture.reason());
     std::error_code error;
     bool adapter = false;
     for (std::filesystem::directory_iterator it("/sys/class/bluetooth", error), end;

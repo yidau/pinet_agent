@@ -69,6 +69,7 @@ grep -qx 'httpd_session_db=/run/piagent-kismet/.kismet/session.db' "$root/etc/ki
 grep -qx 'httpd_auth_file=/var/lib/piagent-kismet/.kismet/kismet_httpd.conf' "$root/etc/kismet/piagent.conf"
 grep -qx 'EnvironmentFile=-/run/piagent-kismet/client.env' "$unit_dir/piagent-telemetry.service"
 grep -qx 'LoadCredential=monitor.key:/run/piagent-kismet/monitor.key' "$unit_dir/piagent-wireless-manager.service"
+grep -qx 'RuntimeDirectoryPreserve=yes' "$unit_dir/piagent-wireless-manager.service"
 grep -qx 'ExecStart=/opt/pocketnet/python/bin/python3.12 -B /opt/pocketnet/current/raspberry/config/kismet/configure.py --runtime-only --provision-only' "$unit_dir/piagent-kismet-provision.service"
 grep -qx 'Requires=piagent-hotspot.service piagent-kismet-provision.service' "$unit_dir/piagent-telemetry.service.d/90-pocketnet-image.conf"
 grep -qx 'PartOf=piagent-kismet-provision.service' "$unit_dir/piagent-telemetry.service.d/90-pocketnet-image.conf"

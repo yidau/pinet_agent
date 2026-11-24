@@ -175,6 +175,15 @@ public:
         return grpc::Status::OK;
     }
 
+    grpc::Status SetObservationMode(grpc::ServerContext* context, const v1::SetObservationModeRequest* request,
+                                    v1::ControlCommandResponse* response) override {
+        auto access = control_access(*context, request->phone_id(), request->request_id());
+        if (!access.ok()) return access;
+        if (!request->has_paused()) return {grpc::StatusCode::INVALID_ARGUMENT, "Missing observation mode"};
+        *response = run_control(request->paused() ? "pause_monitor" : "resume_monitor", request->request_id());
+        return grpc::Status::OK;
+    }
+
     grpc::Status RecoverComponent(grpc::ServerContext* context, const v1::RecoverComponentRequest* request,
                                    v1::ControlCommandResponse* response) override {
         auto access = control_access(*context, request->phone_id(), request->request_id());

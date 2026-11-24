@@ -143,6 +143,31 @@ class WirelessRoleTests(unittest.TestCase):
         api.add.assert_not_called()
         self.assertEqual(manager.check(), ("ready", "", UUID))
 
+    def test_operator_pause_checks_stop_and_only_reopens_on_resume(self):
+        manager, api, _, _, _ = self.running_manager()
+        self.assertEqual(manager.check(), ("ready", "", UUID))
+        self.assertEqual(manager.pause(), ("paused", "monitor_operator_paused", None))
+        self.assertEqual(manager.pause(), ("paused", "monitor_operator_paused", None))
+        api.close_source.assert_called_once_with(UUID)
+        api.open_source.assert_not_called()
+        self.assertEqual(manager.check()[0], "starting")
+        api.open_source.assert_called_once_with(UUID)
+        self.assertEqual(manager.check(), ("ready", "", UUID))
+
+    def test_pause_does_not_claim_success_while_source_runs(self):
+        manager, api, _, _, _ = self.running_manager()
+        api.close_source.side_effect = None
+        self.assertEqual(manager.pause(), ("starting", "monitor_waiting_for_stop", None))
+        api.open_source.assert_not_called()
+
+    def test_kismet_lock_rejects_a_concurrent_operation(self):
+        with radio.kismet_operation(directory=self.root):
+            with self.assertRaises(BlockingIOError):
+                with radio.kismet_operation(block=False, directory=self.root):
+                    self.fail("Concurrent operation acquired the Kismet lock")
+        with radio.kismet_operation(block=False, directory=self.root):
+            pass
+
     def test_fast_replug_with_new_ifindex_reopens_apparently_healthy_source(self):
         manager, api, detect, _, _ = self.running_manager()
         self.assertEqual(manager.check(), ("ready", "", UUID))

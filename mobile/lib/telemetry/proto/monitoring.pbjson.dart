@@ -637,6 +637,13 @@ const CaptureMetrics$json = {
       '10': 'packetStatisticsSource'
     },
     {'1': 'datasource_uuid', '3': 16, '4': 1, '5': 9, '10': 'datasourceUuid'},
+    {
+      '1': 'observation_pause_requested',
+      '3': 17,
+      '4': 1,
+      '5': 8,
+      '10': 'observationPauseRequested'
+    },
   ],
 };
 
@@ -654,7 +661,8 @@ final $typed_data.Uint8List captureMetricsDescriptor = $convert.base64Decode(
     'oQZGF0YXNvdXJjZV9lcnJvchgNIAEoCFIPZGF0YXNvdXJjZUVycm9yEicKD3RyYWNrZWRfZGV2'
     'aWNlcxgOIAEoBFIOdHJhY2tlZERldmljZXMSOAoYcGFja2V0X3N0YXRpc3RpY3Nfc291cmNlGA'
     '8gASgJUhZwYWNrZXRTdGF0aXN0aWNzU291cmNlEicKD2RhdGFzb3VyY2VfdXVpZBgQIAEoCVIO'
-    'ZGF0YXNvdXJjZVV1aWQ=');
+    'ZGF0YXNvdXJjZVV1aWQSPgobb2JzZXJ2YXRpb25fcGF1c2VfcmVxdWVzdGVkGBEgASgIUhlvYn'
+    'NlcnZhdGlvblBhdXNlUmVxdWVzdGVk');
 
 @$core.Deprecated('Use wirelessSummaryDescriptor instead')
 const WirelessSummary$json = {
@@ -1215,6 +1223,21 @@ final $typed_data.Uint8List setCaptureProfileRequestDescriptor = $convert.base64
     'ChhTZXRDYXB0dXJlUHJvZmlsZVJlcXVlc3QSGQoIcGhvbmVfaWQYASABKAlSB3Bob25lSWQSHQ'
     'oKcmVxdWVzdF9pZBgCIAEoCVIJcmVxdWVzdElkEkMKDnRhcmdldF9wcm9maWxlGAMgASgOMhwu'
     'cG9ja2V0bmV0LnYxLkNhcHR1cmVQcm9maWxlUg10YXJnZXRQcm9maWxl');
+
+@$core.Deprecated('Use setObservationModeRequestDescriptor instead')
+const SetObservationModeRequest$json = {
+  '1': 'SetObservationModeRequest',
+  '2': [
+    {'1': 'phone_id', '3': 1, '4': 1, '5': 9, '10': 'phoneId'},
+    {'1': 'request_id', '3': 2, '4': 1, '5': 9, '10': 'requestId'},
+    {'1': 'paused', '3': 3, '4': 1, '5': 8, '10': 'paused'},
+  ],
+};
+
+/// Descriptor for `SetObservationModeRequest`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List setObservationModeRequestDescriptor = $convert.base64Decode(
+    'ChlTZXRPYnNlcnZhdGlvbk1vZGVSZXF1ZXN0EhkKCHBob25lX2lkGAEgASgJUgdwaG9uZUlkEh'
+    '0KCnJlcXVlc3RfaWQYAiABKAlSCXJlcXVlc3RJZBIWCgZwYXVzZWQYAyABKAhSBnBhdXNlZA==');
 
 @$core.Deprecated('Use recoverComponentRequestDescriptor instead')
 const RecoverComponentRequest$json = {

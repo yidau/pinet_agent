@@ -79,6 +79,10 @@ void main() {
       expect(service.deviceId, profile.phoneId);
       expect(feed.snapshot!.bootId, 'loopback-boot');
       expect(feed.phase, TelemetryPhase.live);
+      expect(feed.supportsObservationMode, isTrue);
+      expect((await feed.setObservationPaused(true)).accepted, isTrue);
+      expect((await feed.setObservationPaused(false)).accepted, isTrue);
+      expect(service.pauseRequests, [true, false]);
       await feed.applyDefaultCaptureProfile();
       await feed.applyDefaultCaptureProfile();
       expect(service.profileRequests, [CaptureProfile.EXTENDED]);
@@ -575,6 +579,7 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
   String? deviceId;
   CapturePolicyStatus policy = CapturePolicyStatus(actual: 'light');
   final profileRequests = <CaptureProfile>[];
+  final pauseRequests = <bool>[];
 
   void finish() => _finished.complete();
 
@@ -600,6 +605,17 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
   }
 
   @override
+  Future<ControlCommandResponse> setObservationMode(
+    ServiceCall call,
+    SetObservationModeRequest request,
+  ) async {
+    expect(call.clientMetadata?['authorization'], 'Bearer $token');
+    expect(request.hasPaused(), isTrue);
+    pauseRequests.add(request.paused);
+    return ControlCommandResponse(requestId: request.requestId, accepted: true);
+  }
+
+  @override
   Future<ControlCommandResponse> recoverComponent(
     ServiceCall call,
     RecoverComponentRequest request,
@@ -620,6 +636,7 @@ class _LoopbackTelemetryService extends TelemetryServiceBase {
         schemaVersion: 1,
         sequence: Int64(1),
         capabilityVersion: 2,
+        supportedFeatures: ['observation_mode'],
         capturePolicy: policy,
       ),
     );

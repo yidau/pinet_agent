@@ -373,6 +373,7 @@ struct MonitorState {
     std::string source;
     std::string epoch;
     std::string profile;
+    bool pause_requested = false;
 };
 
 MonitorState readMonitor(const fs::path& path, int64_t now) {
@@ -397,7 +398,10 @@ MonitorState readMonitor(const fs::path& path, int64_t now) {
     }
     const auto state = string(field(doc, "state"), 16);
     const auto reason = string(field(doc, "reason"), 64);
-    if (state == "starting" || state == "degraded") return {state, reason, {}};
+    const auto& paused = field(doc, "pause_requested");
+    const bool pause_requested = paused.is_boolean() && paused.get<bool>();
+    if (state == "starting" || state == "degraded" || state == "paused")
+        return {state, reason, {}, {}, {}, pause_requested};
     const auto source = uuid(field(doc, "datasource_uuid"));
     if (state != "ready" || source.empty()) return {"degraded", "monitor_state_invalid", {}};
     return {state, reason, source, string(field(doc, "observation_epoch"), 64),
@@ -708,6 +712,7 @@ KismetSample KismetCollector::sample(bool include_devices) {
     sample.capture.set_coverage("unavailable");
     sample.wireless.set_coverage("unavailable");
     const auto monitor = readMonitor(monitor_, now);
+    sample.capture.set_observation_pause_requested(monitor.pause_requested);
     if (!loopbackUrl(url_) || !validApiKey(api_key_)) {
         sample.capture.set_datasource_state("unconfigured");
         sample.capture.set_reason("kismet_configuration_required");

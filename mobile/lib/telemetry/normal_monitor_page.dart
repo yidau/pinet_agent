@@ -46,6 +46,8 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
   bool _backgroundChanging = false;
   bool _closed = false;
   CaptureProfile? _awaited;
+  bool? _awaitedPause;
+  Timer? _modeDeadline;
 
   TelemetryConnection get _connection => widget.connection;
   bool get _online =>
@@ -59,11 +61,17 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
       _awaited != null ||
       _connection.snapshot?.capturePolicy.phase == 'switching';
   String? get _actual => _connection.snapshot?.capturePolicy.actual;
+  bool get _paused => _connection.snapshot?.capture.datasourceState == 'paused';
+  bool get _pauseRequested =>
+      _connection.snapshot?.capture.observationPauseRequested ?? false;
   bool get _canRead =>
       !_closed &&
       _online &&
       _connection.supportsV2 &&
       !_fallback &&
+      !_paused &&
+      !_pauseRequested &&
+      _awaitedPause == null &&
       !_switching;
 
   bool get _trafficAvailable {
@@ -110,6 +118,7 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
   @override
   void dispose() {
     _connection.snapshotRevision.removeListener(_snapshot);
+    _modeDeadline?.cancel();
     _sheetRevision.dispose();
     super.dispose();
   }
@@ -144,6 +153,17 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
     }
     if (snap.deviceBootId.isNotEmpty) _boot = snap.deviceBootId;
     _telemetryEpoch = snap.bootId;
+    if (_awaitedPause case final awaiting?) {
+      final state = snap.capture.datasourceState;
+      if ((awaiting && state == 'paused') ||
+          (!awaiting && state == 'ready' && !_pauseRequested)) {
+        _modeDeadline?.cancel();
+        _update(() {
+          _awaitedPause = null;
+          _lastRequest = -4;
+        });
+      }
+    }
     if (_awaited case final pending?) {
       if (snap.capturePolicy.actual == pending.name.toLowerCase()) {
         _update(_restartList);
@@ -206,6 +226,37 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
     } finally {
       if (current()) _update(() => _loading = false);
     }
+  }
+
+  Future<void> _setPause(bool paused) async {
+    _update(() {
+      _awaitedPause = paused;
+      _notice = null;
+    });
+    _modeDeadline?.cancel();
+    _modeDeadline = Timer(const Duration(seconds: 25), () {
+      _update(() {
+        _awaitedPause = null;
+        _notice = '设备尚未确认切换，请查看监听状态。';
+      });
+    });
+    var error = '';
+    try {
+      final result = await _connection.setObservationPaused(paused);
+      if (!result.accepted) {
+        error = result.status == CommandStatus.BUSY
+            ? '外接网卡正在处理其他操作，请稍后重试。'
+            : '树莓派拒绝了模式切换。';
+      }
+    } catch (_) {
+      error = '暂时无法确认请求，请查看后续监听状态。';
+    }
+    if (!mounted || _awaitedPause != paused || error.isEmpty) return;
+    _modeDeadline?.cancel();
+    _update(() {
+      _awaitedPause = null;
+      _notice = error;
+    });
   }
 
   Future<void> _setProfile(CaptureProfile profile) async {
@@ -323,6 +374,8 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
     if (_closed) return '本次查看已结束。';
     if (!_online) return '等待树莓派实时连接。';
     if (!_connection.supportsV2) return '设备端升级后可查看无线设备。';
+    if (_paused) return '监听已暂停。可在「查看所有」查看上次观测。';
+    if (_awaitedPause != null || _pauseRequested) return '等待树莓派确认监听状态。';
     if (_switching) return '正在切换档位，等待采样。';
     if (_fallback) return '资源压力较高，设备暂停无线详情。';
     if (_actual == 'light') return '轻量档未采集流量，可查看所有 AP。';
@@ -374,7 +427,13 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
               .toSet(),
           emptySelectionAllowed: true,
           onSelectionChanged:
-              _online && _connection.supportsV2 && !_closed && !_switching
+              _online &&
+                  _connection.supportsV2 &&
+                  !_closed &&
+                  !_switching &&
+                  !_paused &&
+                  !_pauseRequested &&
+                  _awaitedPause == null
               ? (selection) {
                   if (selection.isNotEmpty) {
                     unawaited(_setProfile(selection.first));
@@ -692,6 +751,31 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
           children: [
             const ConsoleHeading('常态监控'),
             const SizedBox(height: 8),
+            if (_connection.supportsObservationMode)
+              ConsoleCard(
+                padding: EdgeInsets.zero,
+                child: ListTile(
+                  leading: Icon(
+                    _paused ? Icons.pause_circle_outline : Icons.sensors,
+                  ),
+                  title: Text(_paused ? '监听已暂停' : '常态监听'),
+                  subtitle: Text(
+                    _awaitedPause != null || (_pauseRequested && !_paused)
+                        ? '等待树莓派确认'
+                        : _paused && time != null
+                        ? '上次观测 · $time'
+                        : '外接监听网卡',
+                  ),
+                  trailing: OutlinedButton(
+                    onPressed: _online && !_switching && _awaitedPause == null
+                        ? () => unawaited(
+                            _setPause(!(_paused || _pauseRequested)),
+                          )
+                        : null,
+                    child: Text(_paused || _pauseRequested ? '恢复监听' : '暂停监听'),
+                  ),
+                ),
+              ),
             ConsoleCard(
               padding: EdgeInsets.zero,
               child: ListTile(

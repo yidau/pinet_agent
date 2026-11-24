@@ -97,6 +97,7 @@ class SubscribeRequest extends $pb.GeneratedMessage {
   @$pb.TagNumber(2)
   void clearLastEventSequence() => $_clearField(2);
 
+  /// Replay epoch received in boot_id, opaque to clients.
   @$pb.TagNumber(3)
   $core.String get lastBootId => $_getSZ(2);
   @$pb.TagNumber(3)
@@ -439,6 +440,7 @@ class MonitoringSnapshot extends $pb.GeneratedMessage {
           MonitoringSnapshot.$_createMessage);
   static MonitoringSnapshot? _defaultInstance;
 
+  /// Replay epoch: Linux boot identifier followed by a per-process identifier.
   @$pb.TagNumber(1)
   $core.String get bootId => $_getSZ(0);
   @$pb.TagNumber(1)
@@ -1017,6 +1019,7 @@ class CaptureMetrics extends $pb.GeneratedMessage {
     $fixnum.Int64? trackedDevices,
     $core.String? packetStatisticsSource,
     $core.String? datasourceUuid,
+    $core.bool? observationPauseRequested,
   }) {
     final result = CaptureMetrics._();
     if (kismetRunning != null) result.kismetRunning = kismetRunning;
@@ -1037,6 +1040,8 @@ class CaptureMetrics extends $pb.GeneratedMessage {
     if (packetStatisticsSource != null)
       result.packetStatisticsSource = packetStatisticsSource;
     if (datasourceUuid != null) result.datasourceUuid = datasourceUuid;
+    if (observationPauseRequested != null)
+      result.observationPauseRequested = observationPauseRequested;
     return result;
   }
 
@@ -1078,6 +1083,7 @@ class CaptureMetrics extends $pb.GeneratedMessage {
         defaultOrMaker: $fixnum.Int64.ZERO)
     ..aOS(15, _omitFieldNames ? '' : 'packetStatisticsSource')
     ..aOS(16, _omitFieldNames ? '' : 'datasourceUuid')
+    ..aOB(17, _omitFieldNames ? '' : 'observationPauseRequested')
     ..hasRequiredFields = false;
 
   @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
@@ -1245,6 +1251,15 @@ class CaptureMetrics extends $pb.GeneratedMessage {
   $core.bool hasDatasourceUuid() => $_has(15);
   @$pb.TagNumber(16)
   void clearDatasourceUuid() => $_clearField(16);
+
+  @$pb.TagNumber(17)
+  $core.bool get observationPauseRequested => $_getBF(16);
+  @$pb.TagNumber(17)
+  set observationPauseRequested($core.bool value) => $_setBool(16, value);
+  @$pb.TagNumber(17)
+  $core.bool hasObservationPauseRequested() => $_has(16);
+  @$pb.TagNumber(17)
+  void clearObservationPauseRequested() => $_clearField(17);
 }
 
 class WirelessSummary extends $pb.GeneratedMessage {
@@ -2699,6 +2714,7 @@ class DeviceHealth extends $pb.GeneratedMessage {
   $pb.PbList<ComponentHealth> get components => $_getList(0);
 }
 
+/// Data bytes observed by the managed monitor, summed over the reported window.
 class ObservedTraffic extends $pb.GeneratedMessage {
   factory ObservedTraffic({
     TrafficStatus? status,
@@ -3335,6 +3351,7 @@ class ObservedDevicesPage extends $pb.GeneratedMessage {
   @$pb.TagNumber(7)
   void clearTotalCount() => $_clearField(7);
 
+  /// For SSIDs represented on this page, computed before filtering and paging.
   @$pb.TagNumber(8)
   $pb.PbList<SsidTraffic> get ssidTraffic => $_getList(7);
 }
@@ -3422,6 +3439,91 @@ class SetCaptureProfileRequest extends $pb.GeneratedMessage {
   $core.bool hasTargetProfile() => $_has(2);
   @$pb.TagNumber(3)
   void clearTargetProfile() => $_clearField(3);
+}
+
+class SetObservationModeRequest extends $pb.GeneratedMessage {
+  factory SetObservationModeRequest({
+    $core.String? phoneId,
+    $core.String? requestId,
+    $core.bool? paused,
+  }) {
+    final result = SetObservationModeRequest._();
+    if (phoneId != null) result.phoneId = phoneId;
+    if (requestId != null) result.requestId = requestId;
+    if (paused != null) result.paused = paused;
+    return result;
+  }
+
+  SetObservationModeRequest._();
+
+  factory SetObservationModeRequest.fromBuffer($core.List<$core.int> data,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      SetObservationModeRequest()..mergeFromBuffer(data, registry);
+  factory SetObservationModeRequest.fromJson($core.String json,
+          [$pb.ExtensionRegistry registry = $pb.ExtensionRegistry.EMPTY]) =>
+      SetObservationModeRequest()..mergeFromJson(json, registry);
+
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(
+      _omitMessageNames ? '' : 'SetObservationModeRequest',
+      package: const $pb.PackageName(_omitMessageNames ? '' : 'pocketnet.v1'),
+      createEmptyInstance: SetObservationModeRequest.$_createMessage)
+    ..aOS(1, _omitFieldNames ? '' : 'phoneId')
+    ..aOS(2, _omitFieldNames ? '' : 'requestId')
+    ..aOB(3, _omitFieldNames ? '' : 'paused')
+    ..hasRequiredFields = false;
+
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  SetObservationModeRequest clone() => deepCopy();
+  @$core.Deprecated('See https://github.com/google/protobuf.dart/issues/998.')
+  SetObservationModeRequest copyWith(
+          void Function(SetObservationModeRequest) updates) =>
+      super.copyWith((message) => updates(message as SetObservationModeRequest))
+          as SetObservationModeRequest;
+
+  @$core.override
+  $pb.BuilderInfo get info_ => _i;
+
+  @$core.pragma('dart2js:noInline')
+  @$core.Deprecated(
+      'Use SetObservationModeRequest() / SetObservationModeRequest.new instead')
+  static SetObservationModeRequest create() => SetObservationModeRequest._();
+  static $pb.GeneratedMessage $_createMessage() =>
+      SetObservationModeRequest._();
+  @$core.override
+  SetObservationModeRequest createEmptyInstance() =>
+      SetObservationModeRequest._();
+  @$core.pragma('dart2js:noInline')
+  static SetObservationModeRequest getDefault() => _defaultInstance ??=
+      $pb.GeneratedMessage.$_defaultFor<SetObservationModeRequest>(
+          SetObservationModeRequest.$_createMessage);
+  static SetObservationModeRequest? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get phoneId => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set phoneId($core.String value) => $_setString(0, value);
+  @$pb.TagNumber(1)
+  $core.bool hasPhoneId() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPhoneId() => $_clearField(1);
+
+  @$pb.TagNumber(2)
+  $core.String get requestId => $_getSZ(1);
+  @$pb.TagNumber(2)
+  set requestId($core.String value) => $_setString(1, value);
+  @$pb.TagNumber(2)
+  $core.bool hasRequestId() => $_has(1);
+  @$pb.TagNumber(2)
+  void clearRequestId() => $_clearField(2);
+
+  @$pb.TagNumber(3)
+  $core.bool get paused => $_getBF(2);
+  @$pb.TagNumber(3)
+  set paused($core.bool value) => $_setBool(2, value);
+  @$pb.TagNumber(3)
+  $core.bool hasPaused() => $_has(2);
+  @$pb.TagNumber(3)
+  void clearPaused() => $_clearField(3);
 }
 
 class RecoverComponentRequest extends $pb.GeneratedMessage {

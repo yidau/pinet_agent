@@ -7,6 +7,7 @@ service TelemetryService {
   rpc AckHighRisk(AckHighRiskRequest) returns (AckHighRiskResponse);
   rpc GetObservedDevices(ObservedDevicesRequest) returns (ObservedDevicesPage);
   rpc SetCaptureProfile(SetCaptureProfileRequest) returns (ControlCommandResponse);
+  rpc SetObservationMode(SetObservationModeRequest) returns (ControlCommandResponse);
   rpc RecoverComponent(RecoverComponentRequest) returns (ControlCommandResponse);
 }
 
@@ -100,6 +101,7 @@ message CaptureMetrics {
   optional uint64 tracked_devices = 14;
   optional string packet_statistics_source = 15;
   optional string datasource_uuid = 16;
+  optional bool observation_pause_requested = 17;
 }
 
 message WirelessSummary {
@@ -347,6 +349,12 @@ message SetCaptureProfileRequest {
   optional string phone_id = 1;
   optional string request_id = 2;
   optional CaptureProfile target_profile = 3;
+}
+
+message SetObservationModeRequest {
+  optional string phone_id = 1;
+  optional string request_id = 2;
+  optional bool paused = 3;
 }
 
 message RecoverComponentRequest {

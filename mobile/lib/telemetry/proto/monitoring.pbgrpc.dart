@@ -62,6 +62,13 @@ class TelemetryServiceClient extends $grpc.Client {
     return $createUnaryCall(_$setCaptureProfile, request, options: options);
   }
 
+  $grpc.ResponseFuture<$0.ControlCommandResponse> setObservationMode(
+    $0.SetObservationModeRequest request, {
+    $grpc.CallOptions? options,
+  }) {
+    return $createUnaryCall(_$setObservationMode, request, options: options);
+  }
+
   $grpc.ResponseFuture<$0.ControlCommandResponse> recoverComponent(
     $0.RecoverComponentRequest request, {
     $grpc.CallOptions? options,
@@ -90,6 +97,11 @@ class TelemetryServiceClient extends $grpc.Client {
           $0.SetCaptureProfileRequest, $0.ControlCommandResponse>(
       '/pocketnet.v1.TelemetryService/SetCaptureProfile',
       ($0.SetCaptureProfileRequest value) => value.writeToBuffer(),
+      $0.ControlCommandResponse.fromBuffer);
+  static final _$setObservationMode = $grpc.ClientMethod<
+          $0.SetObservationModeRequest, $0.ControlCommandResponse>(
+      '/pocketnet.v1.TelemetryService/SetObservationMode',
+      ($0.SetObservationModeRequest value) => value.writeToBuffer(),
       $0.ControlCommandResponse.fromBuffer);
   static final _$recoverComponent =
       $grpc.ClientMethod<$0.RecoverComponentRequest, $0.ControlCommandResponse>(
@@ -137,6 +149,15 @@ abstract class TelemetryServiceBase extends $grpc.Service {
         ($core.List<$core.int> value) =>
             $0.SetCaptureProfileRequest.fromBuffer(value),
         ($0.ControlCommandResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.SetObservationModeRequest,
+            $0.ControlCommandResponse>(
+        'SetObservationMode',
+        setObservationMode_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) =>
+            $0.SetObservationModeRequest.fromBuffer(value),
+        ($0.ControlCommandResponse value) => value.writeToBuffer()));
     $addMethod($grpc.ServiceMethod<$0.RecoverComponentRequest,
             $0.ControlCommandResponse>(
         'RecoverComponent',
@@ -181,6 +202,15 @@ abstract class TelemetryServiceBase extends $grpc.Service {
 
   $async.Future<$0.ControlCommandResponse> setCaptureProfile(
       $grpc.ServiceCall call, $0.SetCaptureProfileRequest request);
+
+  $async.Future<$0.ControlCommandResponse> setObservationMode_Pre(
+      $grpc.ServiceCall $call,
+      $async.Future<$0.SetObservationModeRequest> $request) async {
+    return setObservationMode($call, await $request);
+  }
+
+  $async.Future<$0.ControlCommandResponse> setObservationMode(
+      $grpc.ServiceCall call, $0.SetObservationModeRequest request);
 
   $async.Future<$0.ControlCommandResponse> recoverComponent_Pre(
       $grpc.ServiceCall $call,

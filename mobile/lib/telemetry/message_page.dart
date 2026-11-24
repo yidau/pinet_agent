@@ -213,6 +213,7 @@ String _priorityLabel(EventPriority priority) => switch (priority) {
 String _eventTitle(MonitoringEvent event) => switch (event.eventType) {
   'history_gap' => '事件历史有间隔',
   'capture_degraded' => '无线采集受限',
+  'capture_paused' => '无线监听已暂停',
   'capture_recovered' || 'capture_available' => '无线采集可用',
   'resource_pressure' => '设备资源压力升高',
   'resource_recovered' => '设备资源压力恢复',
