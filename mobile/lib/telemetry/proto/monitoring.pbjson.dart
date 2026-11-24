@@ -1293,3 +1293,46 @@ final $typed_data.Uint8List controlCommandResponseDescriptor = $convert.base64De
     'ChZDb250cm9sQ29tbWFuZFJlc3BvbnNlEh0KCnJlcXVlc3RfaWQYASABKAlSCXJlcXVlc3RJZB'
     'IaCghhY2NlcHRlZBgCIAEoCFIIYWNjZXB0ZWQSMwoGc3RhdHVzGAMgASgOMhsucG9ja2V0bmV0'
     'LnYxLkNvbW1hbmRTdGF0dXNSBnN0YXR1cxIWCgZyZWFzb24YBCABKAlSBnJlYXNvbg==');
+
+@$core.Deprecated('Use radioLabRequestDescriptor instead')
+const RadioLabRequest$json = {
+  '1': 'RadioLabRequest',
+  '2': [
+    {'1': 'phone_id', '3': 1, '4': 1, '5': 9, '10': 'phoneId'},
+    {'1': 'request_id', '3': 2, '4': 1, '5': 9, '10': 'requestId'},
+    {'1': 'action', '3': 3, '4': 1, '5': 9, '10': 'action'},
+    {'1': 'profile_id', '3': 4, '4': 1, '5': 9, '10': 'profileId'},
+    {'1': 'bssid', '3': 5, '4': 1, '5': 9, '10': 'bssid'},
+    {'1': 'session_id', '3': 6, '4': 1, '5': 9, '10': 'sessionId'},
+    {'1': 'kind', '3': 7, '4': 1, '5': 9, '10': 'kind'},
+  ],
+};
+
+/// Descriptor for RadioLabRequest.
+final $typed_data.Uint8List radioLabRequestDescriptor = $convert.base64Decode(
+    'Cg9SYWRpb0xhYlJlcXVlc3QSGQoIcGhvbmVfaWQYASABKAlSB3Bob25lSWQSHQoKcmVxdWVzdF9pZBgCIAEoCVIJcmVxdWVzdElkEhYKBmFjdGlvbhgDIAEoCVIGYWN0aW9uEh0KCnByb2ZpbGVfaWQYBCABKAlSCXByb2ZpbGVJZBIUCgVic3NpZBgFIAEoCVIFYnNzaWQSHQoKc2Vzc2lvbl9pZBgGIAEoCVIJc2Vzc2lvbklkEhIKBGtpbmQYByABKAlSBGtpbmQ=');
+
+@$core.Deprecated('Use radioLabStatusDescriptor instead')
+const RadioLabStatus$json = {
+  '1': 'RadioLabStatus',
+  '2': [
+    {'1': 'accepted', '3': 1, '4': 1, '5': 8, '10': 'accepted'},
+    {'1': 'phase', '3': 2, '4': 1, '5': 9, '10': 'phase'},
+    {'1': 'reason', '3': 3, '4': 1, '5': 9, '10': 'reason'},
+    {'1': 'session_id', '3': 4, '4': 1, '5': 9, '10': 'sessionId'},
+    {'1': 'profile_id', '3': 5, '4': 1, '5': 9, '10': 'profileId'},
+    {'1': 'ssid', '3': 6, '4': 1, '5': 9, '10': 'ssid'},
+    {'1': 'bssid', '3': 7, '4': 1, '5': 9, '10': 'bssid'},
+    {'1': 'simulated_bssid', '3': 8, '4': 1, '5': 9, '10': 'simulatedBssid'},
+    {'1': 'channel', '3': 9, '4': 1, '5': 9, '10': 'channel'},
+    {'1': 'kind', '3': 10, '4': 1, '5': 9, '10': 'kind'},
+    {'1': 'started_at_ms', '3': 11, '4': 1, '5': 3, '10': 'startedAtMs'},
+    {'1': 'finished_at_ms', '3': 12, '4': 1, '5': 3, '10': 'finishedAtMs'},
+    {'1': 'kismet_restored', '3': 13, '4': 1, '5': 8, '10': 'kismetRestored'},
+    {'1': 'executor_running', '3': 14, '4': 1, '5': 8, '10': 'executorRunning'},
+  ],
+};
+
+/// Descriptor for RadioLabStatus.
+final $typed_data.Uint8List radioLabStatusDescriptor = $convert.base64Decode(
+    'Cg5SYWRpb0xhYlN0YXR1cxIaCghhY2NlcHRlZBgBIAEoCFIIYWNjZXB0ZWQSFAoFcGhhc2UYAiABKAlSBXBoYXNlEhYKBnJlYXNvbhgDIAEoCVIGcmVhc29uEh0KCnNlc3Npb25faWQYBCABKAlSCXNlc3Npb25JZBIdCgpwcm9maWxlX2lkGAUgASgJUglwcm9maWxlSWQSEgoEc3NpZBgGIAEoCVIEc3NpZBIUCgVic3NpZBgHIAEoCVIFYnNzaWQSJwoPc2ltdWxhdGVkX2Jzc2lkGAggASgJUg5zaW11bGF0ZWRCc3NpZBIYCgdjaGFubmVsGAkgASgJUgdjaGFubmVsEhIKBGtpbmQYCiABKAlSBGtpbmQSIgoNc3RhcnRlZF9hdF9tcxgLIAEoA1ILc3RhcnRlZEF0TXMSJAoOZmluaXNoZWRfYXRfbXMYDCABKANSDGZpbmlzaGVkQXRNcxInCg9raXNtZXRfcmVzdG9yZWQYDSABKAhSDmtpc21ldFJlc3RvcmVkEikKEGV4ZWN1dG9yX3J1bm5pbmcYDiABKAhSD2V4ZWN1dG9yUnVubmluZw==');
