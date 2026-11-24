@@ -109,19 +109,26 @@ HighRiskOutbox::~HighRiskOutbox() {
     thread_.join();
 }
 
-void HighRiskOutbox::submit(v1::MonitoringEvent event) {
-    if (!valid_event(event)) return;
+std::future<bool> HighRiskOutbox::submit(v1::MonitoringEvent event) {
+    auto completion = std::make_shared<std::promise<bool>>();
+    auto result = completion->get_future();
     const std::lock_guard<std::mutex> guard(jobs_mutex_);
-    if (event.ByteSizeLong() > record_limit - 64) {
+    if (!valid_event(event)) {
+        completion->set_value(false);
+    } else if (event.ByteSizeLong() > record_limit - 64) {
         ++too_large_;
-    } else if (!storage_ready_) {
+        completion->set_value(false);
+    } else if (!storage_ready_ || stopping_) {
         ++queue_errors_;
+        completion->set_value(false);
     } else if (jobs_.size() == job_limit) {
         ++queue_rejected_;
+        completion->set_value(false);
     } else {
-        jobs_.push_back({std::move(event), {}, {}, {}});
+        jobs_.push_back({std::move(event), {}, {}, {}, std::move(completion)});
         wake_.notify_one();
     }
+    return result;
 }
 
 std::optional<v1::HighRiskEnvelope> HighRiskOutbox::next_for(const std::string& phone) {
@@ -147,7 +154,7 @@ std::string HighRiskOutbox::acknowledge(const std::string& phone, const std::str
     {
         const std::lock_guard<std::mutex> guard(jobs_mutex_);
         if (!storage_ready_ || jobs_.size() == job_limit || stopping_) return "unavailable";
-        jobs_.push_front({{}, phone, id, std::move(completion)});
+        jobs_.push_front({{}, phone, id, std::move(completion), {}});
     }
     wake_.notify_one();
     return result.wait_for(std::chrono::seconds(2)) == std::future_status::ready ? result.get() : "unavailable";
@@ -236,13 +243,13 @@ void HighRiskOutbox::sweep(sqlite3* db, std::int64_t now) {
     }
 }
 
-void HighRiskOutbox::insert(sqlite3* db, v1::MonitoringEvent event) {
+bool HighRiskOutbox::insert(sqlite3* db, v1::MonitoringEvent event) {
     const auto now = clock_();
     if (!event.event_id().empty()) {
         Statement duplicate(db, "SELECT 1 FROM signatures WHERE signature=? AND created>?");
         duplicate.text(1, event.event_id());
         duplicate.integer(2, now - 300000);
-        if (sqlite3_step(duplicate.value) == SQLITE_ROW) return;
+        if (sqlite3_step(duplicate.value) == SQLITE_ROW) return true;
     }
     Record item{};
     item.envelope.set_durable_id(random_id());
@@ -254,7 +261,7 @@ void HighRiskOutbox::insert(sqlite3* db, v1::MonitoringEvent event) {
     item.size = payload.size();
     if (item.size > record_limit) {
         counters_.set_oversize_rejected_count(counters_.oversize_rejected_count() + 1);
-        return;
+        return false;
     }
     std::vector<std::list<Record>::iterator> candidates;
     if (bytes_ + item.size > budget_ || records_.size() >= row_limit) {
@@ -272,7 +279,7 @@ void HighRiskOutbox::insert(sqlite3* db, v1::MonitoringEvent event) {
     }
     if (remaining + item.size > budget_ || records_.size() - count >= row_limit) {
         counters_.set_overflow_rejected_count(counters_.overflow_rejected_count() + 1);
-        return;
+        return false;
     }
     if (std::filesystem::space(directory_).available < 16 * 1024 * 1024) {
         throw std::runtime_error("Insufficient free space for the durable queue");
@@ -302,6 +309,7 @@ void HighRiskOutbox::insert(sqlite3* db, v1::MonitoringEvent event) {
     bytes_ = remaining + item.size;
     counters_.set_overflow_evicted_count(counters_.overflow_evicted_count() + count);
     records_.push_back(std::move(item));
+    return true;
 }
 
 std::string HighRiskOutbox::delete_ack(sqlite3* db, const std::string& phone, const std::string& id) {
@@ -359,13 +367,21 @@ void HighRiskOutbox::work() {
         const std::lock_guard<std::mutex> guard(mutex_);
         try {
             sweep(db.get(), clock_());
-            if (job.completion) job.completion->set_value(delete_ack(db.get(), job.phone, job.id));
-            else if (job.event.has_event_category()) insert(db.get(), std::move(job.event));
+            if (job.completion) {
+                const auto outcome = delete_ack(db.get(), job.phone, job.id);
+                publish_status();
+                job.completion->set_value(outcome);
+            } else if (job.persisted) {
+                const bool committed = insert(db.get(), std::move(job.event));
+                publish_status();
+                job.persisted->set_value(committed);
+            }
         } catch (const std::exception&) {
             counters_.set_storage_error_count(counters_.storage_error_count() + 1);
+            publish_status();
             if (job.completion) job.completion->set_value("unavailable");
+            if (job.persisted) job.persisted->set_value(false);
         }
-        publish_status();
     }
 }
 

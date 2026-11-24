@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import '../ui/console_style.dart';
 import 'dashboard_page.dart';
 import 'message_repository.dart';
+import 'monitor_focus.dart';
 import 'proto/monitoring.pb.dart';
 import 'telemetry_connection.dart';
 
@@ -33,6 +34,8 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
   final _devices = <ObservedDevice>[];
   ObservedDevicesPage? _page;
   String? _boot;
+  String? _telemetryEpoch;
+  int _lastDeviceRequestSequence = -4;
   String? _notice;
   String? _filter;
   bool _loading = false;
@@ -52,13 +55,9 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
   @override
   void didUpdateWidget(NormalMonitorPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active &&
-        !oldWidget.active &&
-        _page == null &&
-        !_closed &&
-        _connection.supportsV2) {
+    if (widget.active && !oldWidget.active) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && widget.active) unawaited(_load());
+        if (mounted && widget.active) _snapshot();
       });
     }
   }
@@ -72,36 +71,58 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
   void _snapshot() {
     final snap = _connection.snapshot;
     if (snap == null) return;
-    if (snap.deviceBootId.isNotEmpty) {
-      if (_boot != null && _boot != snap.deviceBootId) {
-        setState(() {
-          _watch.clear();
-          _reset();
-        });
-      }
-      _boot = snap.deviceBootId;
+    final deviceRebooted = _boot != null &&
+        snap.deviceBootId.isNotEmpty &&
+        _boot != snap.deviceBootId;
+    final telemetryRestarted = _telemetryEpoch != null &&
+        _telemetryEpoch != snap.bootId;
+    if (deviceRebooted || telemetryRestarted) {
+      setState(() {
+        // Telemetry process restarts invalidate paging cursors, not this
+        // physical monitoring session. Only a Pi reboot clears focus rules.
+        if (deviceRebooted) _watch.clear();
+        _reset();
+      });
     }
+    if (snap.deviceBootId.isNotEmpty) _boot = snap.deviceBootId;
+    _telemetryEpoch = snap.bootId;
     final pending = _awaited;
     if (pending != null &&
         (snap.capturePolicy.actual == pending.name.toLowerCase() ||
-            const {
-              'failed',
-              'rolled_back',
-            }.contains(snap.capturePolicy.phase))) {
+            const {'failed', 'rolled_back'}.contains(snap.capturePolicy.phase))) {
       setState(() => _awaited = null);
     }
-    if (widget.active &&
-        _page == null &&
-        !_closed &&
-        _connection.supportsV2 &&
-        !_loading &&
-        _notice == null) {
+    if (!widget.active || _closed || _loading || !_connection.supportsV2 ||
+        _connection.phase != TelemetryPhase.live || _connection.stale ||
+        _setting || _awaited != null) {
+      return;
+    }
+    final seq = snap.sequence.toInt();
+    if (_page == null) {
+      if (seq - _lastDeviceRequestSequence >= 2) unawaited(_load());
+      return;
+    }
+    if (shouldReloadObservedDevices(
+      visible: widget.active,
+      live: _connection.phase == TelemetryPhase.live,
+      stale: _connection.stale,
+      loading: _loading,
+      closed: _closed,
+      busy: _setting || _awaited != null || snap.capturePolicy.phase == 'switching',
+      pressureFallback: snap.resourcePressure.level == ResourceLevel.LEVEL2_FALLBACK,
+      loadedCount: _devices.length,
+      currentSequence: seq,
+      lastRequestSequence: _lastDeviceRequestSequence,
+      latestWirelessSampleMs: snap.wireless.sampledAtMs.toInt(),
+      loadedWirelessSampleMs: _page!.sampledAtMs.toInt(),
+    )) {
       unawaited(_load());
     }
   }
 
   void _reset() {
     _loadVersion++;
+    _lastDeviceRequestSequence = -4;
     _page = null;
     _loading = false;
     _devices.clear();
@@ -112,6 +133,7 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
   Future<void> _load({bool more = false}) async {
     if (_loading || _connection.stale || !_connection.supportsV2) return;
     final ticket = ++_loadVersion;
+    _lastDeviceRequestSequence = _connection.snapshot?.sequence.toInt() ?? _lastDeviceRequestSequence;
     setState(() {
       _loading = true;
       _notice = null;
@@ -243,6 +265,11 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
     bool watched(ObservedDevice device) =>
         _watch.contains('SSID ${device.ssid}') ||
         _watch.contains('BSSID ${device.bssid}');
+    final ssidByBssid = <String, String>{
+      for (final group in aps.values)
+        for (final ap in group)
+          if (ap.ssid.isNotEmpty) ap.bssid: ap.ssid,
+    };
     final groups = aps.values.toList()
       ..sort((a, b) {
         final aWatched = a.any(watched);
@@ -258,8 +285,8 @@ class _NormalMonitorPageState extends State<NormalMonitorPage> {
             .toList()
           ..sort((a, b) {
             final comparison =
-                (_watch.contains('BSSID ${b.event.bssid}') ? 1 : 0) -
-                (_watch.contains('BSSID ${a.event.bssid}') ? 1 : 0);
+                (focusMatchesBssid(b.event.bssid, _watch, ssidByBssid) ? 1 : 0) -
+                (focusMatchesBssid(a.event.bssid, _watch, ssidByBssid) ? 1 : 0);
             return comparison != 0
                 ? comparison
                 : b.event.timestampMs.compareTo(a.event.timestampMs);

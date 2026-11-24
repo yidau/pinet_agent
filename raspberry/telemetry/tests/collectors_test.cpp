@@ -243,6 +243,7 @@ void kismetSample() {
     expect(alerts.reachable && alerts.events.size() == 2 &&
            alerts.events[0].risk_class() == pocketnet::v1::SUSPICIOUS &&
            alerts.events[1].risk_class() == pocketnet::v1::CRITICAL &&
+           alerts.events[1].confidence() == pocketnet::v1::LIMITED &&
            alerts.events[0].event_id() != alerts.events[1].event_id(),
            "alerts are independent of the view and ignore an upstream hash collision");
     monitor["timestamp_ms"] = (now - 60) * 1000;

@@ -31,7 +31,9 @@ public:
     HighRiskOutbox(const HighRiskOutbox&) = delete;
     HighRiskOutbox& operator=(const HighRiskOutbox&) = delete;
 
-    void submit(v1::MonitoringEvent event);
+    // Completes true only once a transaction has committed (or an already
+    // committed duplicate was found). Never block the Kismet collector on disk I/O.
+    std::future<bool> submit(v1::MonitoringEvent event);
     std::optional<v1::HighRiskEnvelope> next_for(const std::string& phone);
     std::string acknowledge(const std::string& phone, const std::string& id);
     v1::HighRiskDeliveryStatus status() const;
@@ -49,6 +51,7 @@ private:
         std::string phone;
         std::string id;
         std::shared_ptr<std::promise<std::string>> completion;
+        std::shared_ptr<std::promise<bool>> persisted;
     };
     struct Receipt {
         std::string id;
@@ -59,7 +62,7 @@ private:
     void work();
     void open(sqlite3* db);
     void sweep(sqlite3* db, std::int64_t now);
-    void insert(sqlite3* db, v1::MonitoringEvent event);
+    bool insert(sqlite3* db, v1::MonitoringEvent event);
     std::string delete_ack(sqlite3* db, const std::string& phone, const std::string& id);
     void remember(Receipt receipt);
     void publish_status();
