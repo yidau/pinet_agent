@@ -11,6 +11,16 @@
 
 构建过程将官方 Ubuntu 22.04.5 树莓派镜像的签名、SHA-256 和缓存分别核对，在 WSL 的临时工作副本上挂载 loop 分区，通过 QEMU ARM64 chroot 安装目标依赖和编译。构建日志保存在 /var/cache/pocketnet-image/logs/ 下。生成的 IMG、软件更新包、manifest.json 和 SHA256SUMS 放在 dist/。
 
+### 可选安装 MDK4 软件包
+
+需要在新设备上预装 Ubuntu 的 MDK4 软件包时，构建镜像前设置 `POCKETNET_INCLUDE_MDK4=true`。常规镜像的默认值为 `false`。镜像清单的 `mdk4` 字段记录实际的软件包状态、版本和架构。
+
+新镜像和通过有线 SSH 安装了检查脚本的旧设备，都可以用以下只读命令验收。
+
+    /opt/pocketnet/deploy/mdk4-package-status
+
+检查接口直接读取 dpkg 数据库。安装完整时返回 `installed`、软件包版本及架构。未安装或安装未完成时分别返回 `not_installed` 和 `incomplete`。手机端继续使用现有的 PocketNet 1.2.0（构建 19）。
+
 ## 烧录后通过网线调试
 
 1. 把 Windows 的有线网卡设为 192.168.77.1，掩码 255.255.255.0，网关留空。

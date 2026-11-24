@@ -3,6 +3,11 @@ set -Eeuo pipefail
 repo=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
 config="$repo/deploy/image"
 . "$config/image.env"
+include_mdk4=${POCKETNET_INCLUDE_MDK4:-false}
+case "$include_mdk4" in
+    true|false) ;;
+    *) echo 'POCKETNET_INCLUDE_MDK4 must be true or false.' >&2; exit 2 ;;
+esac
 
 public_key=${1:-${POCKETNET_SSH_PUBLIC_KEY:-}}
 if [[ "$ENABLE_SSH" == true && -z "$public_key" ]]; then
@@ -25,7 +30,9 @@ fi
 [[ "$commit" =~ ^[[:xdigit:]]{40}$ ]] ||
     { echo 'Use a Git checkout, or set POCKETNET_COMMIT for a pinned source archive.' >&2; exit 1; }
 
-if (( EUID != 0 )); then exec sudo -- env "POCKETNET_COMMIT=$commit" bash "$0" "$public_key"; fi
+if (( EUID != 0 )); then
+    exec sudo -- env "POCKETNET_COMMIT=$commit" "POCKETNET_INCLUDE_MDK4=$include_mdk4" bash "$0" "$public_key"
+fi
 . /etc/os-release
 [[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 22.04 && "$(uname -m)" == x86_64 && "$(uname -r)" == *WSL2* ]] ||
     { echo 'Build on Ubuntu 22.04 x86_64 WSL2.' >&2; exit 1; }
@@ -139,6 +146,9 @@ printf 'deb [signed-by=/usr/share/keyrings/pocketnet-kismet.gpg] https://www.kis
     "$KISMET_CHANNEL" "$KISMET_CHANNEL" > "$root/etc/apt/sources.list.d/pocketnet-kismet.list"
 arm apt-get -o Acquire::Retries=2 -o Acquire::Languages=none -o APT::Update::Error-Mode=any update
 mapfile -t packages < "$config/packages.txt"
+if [[ "$include_mdk4" == true ]]; then
+    packages+=(mdk4)
+fi
 if [[ "$(arm dpkg-query -W -f='${db:Status-Abbrev}' linux-firmware 2>/dev/null)" != 'ii ' ]]; then
     packages+=(linux-firmware)
 fi
@@ -160,6 +170,12 @@ bash "$repo/scripts/build-arm64-release.sh" "$root" "$release" "$commit"
 release_sha=$(sha256sum "$release" | cut -d' ' -f1)
 bash "$repo/scripts/install-release.sh" --sha256 "$release_sha" --root "$root" "$release"
 bash "$config/install-system.sh" "$root"
+mdk4_status_path=/opt/pocketnet/deploy/mdk4-package-status
+install -D -m 0755 "$repo/scripts/mdk4-package-status.sh" "$root$mdk4_status_path"
+mdk4_status=$(arm "$mdk4_status_path")
+if [[ "$include_mdk4" == true ]]; then
+    jq -e '.status == "installed" and .architecture == "arm64"' <<< "$mdk4_status" >/dev/null
+fi
 
 kismet_version=$(arm dpkg-query -W -f='${Version}' kismet-core)
 protobuf_version=$(arm pkg-config --modversion protobuf)
@@ -199,7 +215,7 @@ xz -T2 -3 -c "$image" > "$stage/$image_name"
 jq -n --arg git_commit "$commit" --arg ubuntu_release "$UBUNTU_RELEASE" --arg base_image "$base" \
     --arg base_sha256 "$base_sha" --arg arch "$UBUNTU_ARCH" --arg python "$python_version" \
     --arg kismet "$kismet_version" --arg build_type "$BUILD_TYPE" --arg protobuf "$protobuf_version" \
-    --arg grpc "$grpc_version" --arg generated_at "$(date -u +%FT%TZ)" \
+    --arg grpc "$grpc_version" --arg generated_at "$(date -u +%FT%TZ)" --argjson mdk4 "$mdk4_status" \
     --arg image "$image_name" --arg release "$(basename "$release")" --arg release_sha256 "$release_sha" \
     '$ARGS.named' > "$stage/manifest.json"
 (cd "$stage" && sha256sum "$image_name" "$(basename "$release")" manifest.json > SHA256SUMS)
